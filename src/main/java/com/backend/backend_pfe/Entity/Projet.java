@@ -6,6 +6,7 @@ import jakarta.persistence.*;
 import lombok.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,9 +35,17 @@ public class Projet {
     @Enumerated(EnumType.STRING)
     private StatutProjet statut;
 
+    @Column(nullable = false, updatable = false)
+    private LocalDateTime dateCreation;
+
     @ManyToOne
     @JoinColumn(name = "chef_projet_id")
     private User chefProjet;
+
+    @PrePersist
+    protected void onCreate() {
+        this.dateCreation = LocalDateTime.now();
+    }
 
     @OneToMany(mappedBy = "projet", cascade = CascadeType.ALL)
     private List<Affectation> affectations = new ArrayList<>();
