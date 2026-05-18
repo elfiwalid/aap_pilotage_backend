@@ -17,16 +17,16 @@ import java.util.List;
  * REST controller for project creation endpoints.
  *
  * SOLID — Single Responsibility Principle (SRP):
- *   This controller only handles HTTP concerns (request mapping,
- *   validation, response formatting). All business logic is
- *   delegated to ProjetService.
+ * This controller only handles HTTP concerns (request mapping,
+ * validation, response formatting). All business logic is
+ * delegated to ProjetService.
  *
  * SOLID — Dependency Inversion Principle (DIP):
- *   Depends on the ProjetService abstraction, not on ProjetServiceImpl.
+ * Depends on the ProjetService abstraction, not on ProjetServiceImpl.
  *
  * Clean Code — Thin Controller:
- *   The controller is intentionally thin; it validates input
- *   and delegates to the service layer.
+ * The controller is intentionally thin; it validates input
+ * and delegates to the service layer.
  */
 @RestController
 @RequestMapping("/api/projets")
@@ -38,7 +38,7 @@ public class ProjetController {
     /**
      * Create a new project associated with the authenticated Chef de Projet.
      *
-     * @param request ProjetRequestDTO with project details
+     * @param request        ProjetRequestDTO with project details
      * @param authentication the security context of the authenticated user
      * @return ProjetResponseDTO containing the created project details
      */
@@ -58,7 +58,7 @@ public class ProjetController {
      * @return list of ProjetResponseDTO
      */
     @GetMapping
-    @PreAuthorize("hasRole('CHEF_PROJET')")
+    @PreAuthorize("hasAnyRole('CHEF_PROJET', 'RESOURCE_MANAGER')")
     public ResponseEntity<List<ProjetResponseDTO>> getMesProjets(Authentication authentication) {
         List<ProjetResponseDTO> projets = projetService.getMesProjets(authentication);
         return ResponseEntity.ok(projets);

@@ -75,12 +75,15 @@ public class ProjetServiceImpl implements ProjetService {
     @Override
     public List<ProjetResponseDTO> getMesProjets(Authentication authentication) {
         String email = authentication.getName();
+        User user = userRepository.findByEmail(email)
+                .orElseThrow(() -> new ResourceNotFoundException("Utilisateur introuvable"));
 
-        User chefProjet = userRepository.findByEmail(email)
-                .orElseThrow(() -> new ResourceNotFoundException(
-                        "Chef de projet introuvable"));
-
-        List<Projet> projets = projetRepository.findByChefProjet(chefProjet);
+        List<Projet> projets;
+        if (user.getRole().name().equals("RESOURCE_MANAGER")) {
+            projets = projetRepository.findAll();
+        } else {
+            projets = projetRepository.findByChefProjet(user);
+        }
 
         return projets.stream()
                 .map(this::mapToResponseDTO)
@@ -89,7 +92,7 @@ public class ProjetServiceImpl implements ProjetService {
 
     private ProjetResponseDTO mapToResponseDTO(Projet projet) {
         User chef = projet.getChefProjet();
-        String nomComplet = chef.getNom() + " " + chef.getPrenom();
+        String nomComplet = chef != null ? chef.getNom() + " " + chef.getPrenom() : "Non assigné";
 
         return ProjetResponseDTO.builder()
                 .id(projet.getId())
@@ -98,7 +101,7 @@ public class ProjetServiceImpl implements ProjetService {
                 .dateDebut(projet.getDateDebut())
                 .dateFin(projet.getDateFin())
                 .statut(projet.getStatut())
-                .chefProjetId(chef.getId())
+                .chefProjetId(chef != null ? chef.getId() : null)
                 .chefProjetNomComplet(nomComplet)
                 .dateCreation(projet.getDateCreation())
                 .build();
