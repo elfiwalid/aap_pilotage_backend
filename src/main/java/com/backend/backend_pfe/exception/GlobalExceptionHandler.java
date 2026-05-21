@@ -95,8 +95,6 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGenericException(Exception ex) {
-        System.err.println("CRITICAL ERROR: " + ex.getMessage());
-        ex.printStackTrace();
         return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR,
                 "Une erreur interne est survenue.");
     }

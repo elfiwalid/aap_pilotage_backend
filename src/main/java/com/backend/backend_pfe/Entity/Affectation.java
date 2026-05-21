@@ -26,8 +26,6 @@ public class Affectation {
     private Double tauxAffectation;
 
     private Double chargePrevue;
-    private Double tjm;
-    private Integer nombreJours;
 
     private String roleDansProjet;
 

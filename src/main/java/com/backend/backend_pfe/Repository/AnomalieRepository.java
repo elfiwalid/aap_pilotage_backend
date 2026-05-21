@@ -13,8 +13,6 @@ public interface AnomalieRepository extends JpaRepository<Anomalie, Long> {
     List<Anomalie> findByProjet(Projet projet);
 
     List<Anomalie> findByCollaborateur(User collaborateur);
-    
-    boolean existsByCollaborateurAndStatut(User collaborateur, StatutAnomalie statut);
 
     List<Anomalie> findByStatut(StatutAnomalie statut);
 }

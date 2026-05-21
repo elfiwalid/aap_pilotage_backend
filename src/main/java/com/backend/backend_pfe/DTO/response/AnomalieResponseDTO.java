@@ -1,21 +1,4 @@
 package com.backend.backend_pfe.DTO.response;
 
-import lombok.*;
-import java.time.LocalDateTime;
-
-@Getter
-@Setter
-@NoArgsConstructor
-@AllArgsConstructor
-@Builder
 public class AnomalieResponseDTO {
-    private Long id;
-    private String typeAnomalie;
-    private String description;
-    private LocalDateTime dateDetection;
-    private Boolean resolu;
-    private Long projetId;
-    private String projetNom;
-    private Long collaborateurId;
-    private String collaborateurNomComplet;
 }

@@ -54,14 +54,8 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
-                        .requestMatchers("/api/users/**").authenticated()
-                        .requestMatchers("/api/affectations/**").authenticated()
-                        .requestMatchers("/api/anomalies/**").authenticated()
-                        .requestMatchers("/api/notifications/**").authenticated()
-                        .requestMatchers("/api/kpis/**").authenticated()
-                        .requestMatchers("/api/import/**").authenticated()
                         .requestMatchers(HttpMethod.POST, "/api/projets").hasRole("CHEF_PROJET")
-                        .requestMatchers(HttpMethod.GET, "/api/projets").hasAnyRole("CHEF_PROJET", "RESOURCE_MANAGER")
+                        .requestMatchers(HttpMethod.GET, "/api/projets").hasRole("CHEF_PROJET")
                         .anyRequest().authenticated()
                 )
                 .authenticationProvider(authenticationProvider())
@@ -73,7 +67,7 @@ public class SecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://localhost:4200"));
+        configuration.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000", "http://localhost:4200"));
         configuration.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(List.of("*"));
         configuration.setAllowCredentials(true);
