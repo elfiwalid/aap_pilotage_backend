@@ -18,4 +18,10 @@ public interface PrevisionRepository extends JpaRepository<Prevision, Long> {
     List<Prevision> findByTypePrevision(TypePrevision typePrevision);
 
     List<Prevision> findByProjetAndActiveTrue(Projet projet);
+
+    List<Prevision> findByProjetOrderByDateImportDesc(Projet projet);
+
+    List<Prevision> findByProjetAndTypePrevisionAndActiveTrue(Projet projet, TypePrevision typePrevision);
+
+    List<Prevision> findByImporteParAndActiveTrue(User importePar);
 }

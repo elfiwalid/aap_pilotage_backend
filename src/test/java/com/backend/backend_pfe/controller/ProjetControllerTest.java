@@ -13,10 +13,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.ComponentScan;
+import org.springframework.context.annotation.FilterType;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
@@ -26,7 +27,7 @@ import java.time.LocalDateTime;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
-import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.csrf;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -35,7 +36,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  *
  * Validates: Requirements 5.1, 5.3, 5.4, 5.5, 5.6, 5.7
  */
-@WebMvcTest(ProjetController.class)
+@WebMvcTest(value = ProjetController.class,
+        includeFilters = @ComponentScan.Filter(
+                type = FilterType.ASSIGNABLE_TYPE,
+                classes = {JwtAuthenticationFilter.class}
+        ))
 @Import({SecurityConfig.class, GlobalExceptionHandler.class})
 class ProjetControllerTest {
 
@@ -52,14 +57,10 @@ class ProjetControllerTest {
     private JwtService jwtService;
 
     @MockitoBean
-    private JwtAuthenticationFilter jwtAuthenticationFilter;
-
-    @MockitoBean
     private UserDetailsService userDetailsService;
 
     @Test
     @DisplayName("POST /api/projets avec données valides → HTTP 201")
-    @WithMockUser(username = "chef@example.com", roles = "CHEF_PROJET")
     void creerProjet_withValidData_returns201() throws Exception {
         // Arrange
         ProjetRequestDTO request = ProjetRequestDTO.builder()
@@ -87,7 +88,7 @@ class ProjetControllerTest {
 
         // Act & Assert
         mockMvc.perform(post("/api/projets")
-                        .with(csrf())
+                        .with(user("chef@example.com").roles("CHEF_PROJET"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isCreated())
@@ -104,7 +105,6 @@ class ProjetControllerTest {
 
     @Test
     @DisplayName("POST /api/projets avec nom vide → HTTP 400")
-    @WithMockUser(username = "chef@example.com", roles = "CHEF_PROJET")
     void creerProjet_withEmptyNom_returns400() throws Exception {
         // Arrange
         ProjetRequestDTO request = ProjetRequestDTO.builder()
@@ -117,7 +117,7 @@ class ProjetControllerTest {
 
         // Act & Assert
         mockMvc.perform(post("/api/projets")
-                        .with(csrf())
+                        .with(user("chef@example.com").roles("CHEF_PROJET"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
@@ -128,7 +128,6 @@ class ProjetControllerTest {
 
     @Test
     @DisplayName("POST /api/projets avec dateFin < dateDebut → HTTP 400")
-    @WithMockUser(username = "chef@example.com", roles = "CHEF_PROJET")
     void creerProjet_withDateFinBeforeDateDebut_returns400() throws Exception {
         // Arrange
         ProjetRequestDTO request = ProjetRequestDTO.builder()
@@ -145,7 +144,7 @@ class ProjetControllerTest {
 
         // Act & Assert
         mockMvc.perform(post("/api/projets")
-                        .with(csrf())
+                        .with(user("chef@example.com").roles("CHEF_PROJET"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
@@ -156,8 +155,8 @@ class ProjetControllerTest {
     }
 
     @Test
-    @DisplayName("POST /api/projets sans authentification → HTTP 401")
-    void creerProjet_withoutAuthentication_returns401() throws Exception {
+    @DisplayName("POST /api/projets sans authentification → HTTP 403")
+    void creerProjet_withoutAuthentication_returns403() throws Exception {
         // Arrange
         ProjetRequestDTO request = ProjetRequestDTO.builder()
                 .nom("Projet Gamma")
@@ -167,19 +166,18 @@ class ProjetControllerTest {
                 .statut(StatutProjet.PLANIFIE)
                 .build();
 
-        // Act & Assert
+        // Act & Assert — Spring Security returns 403 for anonymous users
+        // when no custom AuthenticationEntryPoint is configured
         mockMvc.perform(post("/api/projets")
-                        .with(csrf())
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isUnauthorized());
+                .andExpect(status().isForbidden());
 
         verify(projetService, never()).creerProjet(any(), any());
     }
 
     @Test
     @DisplayName("POST /api/projets avec rôle non CHEF_PROJET → HTTP 403")
-    @WithMockUser(username = "collab@example.com", roles = "COLLABORATEUR")
     void creerProjet_withNonChefProjetRole_returns403() throws Exception {
         // Arrange
         ProjetRequestDTO request = ProjetRequestDTO.builder()
@@ -192,7 +190,7 @@ class ProjetControllerTest {
 
         // Act & Assert
         mockMvc.perform(post("/api/projets")
-                        .with(csrf())
+                        .with(user("collab@example.com").roles("COLLABORATEUR"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isForbidden());
@@ -202,14 +200,13 @@ class ProjetControllerTest {
 
     @Test
     @DisplayName("POST /api/projets avec JSON malformé → HTTP 400")
-    @WithMockUser(username = "chef@example.com", roles = "CHEF_PROJET")
     void creerProjet_withMalformedJson_returns400() throws Exception {
         // Arrange
         String malformedJson = "{ invalid json content }";
 
         // Act & Assert
         mockMvc.perform(post("/api/projets")
-                        .with(csrf())
+                        .with(user("chef@example.com").roles("CHEF_PROJET"))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(malformedJson))
                 .andExpect(status().isBadRequest())

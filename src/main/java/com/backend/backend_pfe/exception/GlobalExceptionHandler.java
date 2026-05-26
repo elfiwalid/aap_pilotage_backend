@@ -8,6 +8,8 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import java.time.LocalDateTime;
 import java.util.HashMap;
@@ -91,10 +93,34 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handle file upload size exceeded (> 10 Mo).
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<Map<String, Object>> handleMaxUploadSize(
+            MaxUploadSizeExceededException ex) {
+        return buildErrorResponse(HttpStatus.BAD_REQUEST,
+                "La taille maximale autorisée est de 10 Mo");
+    }
+
+    /**
+     * Handle type mismatch (e.g., invalid enum value for TypePrevision).
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<Map<String, Object>> handleTypeMismatch(
+            MethodArgumentTypeMismatchException ex) {
+        if (ex.getRequiredType() != null && ex.getRequiredType().isEnum()) {
+            return buildErrorResponse(HttpStatus.BAD_REQUEST,
+                    "Les valeurs acceptées sont : TRIMESTRIELLE, ANNUELLE");
+        }
+        return buildErrorResponse(HttpStatus.BAD_REQUEST, "Paramètre invalide");
+    }
+
+    /**
      * Catch-all for unexpected exceptions.
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGenericException(Exception ex) {
+        ex.printStackTrace();
         return buildErrorResponse(HttpStatus.INTERNAL_SERVER_ERROR,
                 "Une erreur interne est survenue.");
     }

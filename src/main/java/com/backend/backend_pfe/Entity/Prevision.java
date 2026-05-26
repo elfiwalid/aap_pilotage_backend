@@ -21,6 +21,7 @@ public class Prevision {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    @Column(length = 255)
     private String nomFichier;
 
     @Enumerated(EnumType.STRING)
@@ -33,6 +34,9 @@ public class Prevision {
     private LocalDateTime dateImport;
 
     private Boolean active;
+
+    @Column(columnDefinition = "BYTEA")
+    private byte[] fichierData;
 
     @ManyToOne
     @JoinColumn(name = "importe_par_id")
