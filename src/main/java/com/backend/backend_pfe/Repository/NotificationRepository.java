@@ -12,7 +12,11 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
 
     List<Notification> findByDestinataire(User destinataire);
 
+    List<Notification> findByDestinataireOrderByDateCreationDesc(User destinataire);
+
     List<Notification> findByDestinataireAndStatut(User destinataire, StatutNotification statut);
 
     List<Notification> findByExpediteur(User expediteur);
+
+    long countByDestinataireAndStatut(User destinataire, StatutNotification statut);
 }

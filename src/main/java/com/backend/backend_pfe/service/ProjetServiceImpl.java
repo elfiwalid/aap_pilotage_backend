@@ -32,6 +32,7 @@ public class ProjetServiceImpl implements ProjetService {
 
     private final ProjetRepository projetRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     @Override
     public ProjetResponseDTO creerProjet(ProjetRequestDTO request, Authentication authentication) {
@@ -67,6 +68,15 @@ public class ProjetServiceImpl implements ProjetService {
 
         // 6. Persister
         Projet saved = projetRepository.save(projet);
+
+        // 6b. Notifier le chef de projet de la création
+        notificationService.creerNotification(
+                chefProjet, null,
+                com.backend.backend_pfe.enums.TypeNotification.PROJET,
+                "Projet créé — " + saved.getNom(),
+                String.format("Le projet « %s » a été créé avec succès (statut : %s).",
+                        saved.getNom(), statut.name()),
+                null);
 
         // 7. Mapper Entity → ResponseDTO
         return mapToResponseDTO(saved);

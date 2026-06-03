@@ -37,7 +37,7 @@ class ProjetServiceStatutDefautPropertyTest {
 
     private final ProjetRepository projetRepository = Mockito.mock(ProjetRepository.class);
     private final UserRepository userRepository = Mockito.mock(UserRepository.class);
-    private final ProjetServiceImpl projetService = new ProjetServiceImpl(projetRepository, userRepository);
+    private final ProjetServiceImpl projetService = new ProjetServiceImpl(projetRepository, userRepository, null);
 
     /**
      * Property 5: Statut par défaut PLANIFIE

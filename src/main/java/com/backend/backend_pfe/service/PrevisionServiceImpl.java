@@ -62,6 +62,8 @@ public class PrevisionServiceImpl implements PrevisionService {
     private final AffectationRepository affectationRepository;
     private final AnomalieDetectionService anomalieDetectionService;
     private final PasswordEncoder passwordEncoder;
+    private final NotificationService notificationService;
+    private final AnomalieDetectionV2Service anomalieDetectionV2Service;
 
     private static final long MAX_FILE_SIZE = 10L * 1024 * 1024; // 10 Mo
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("xlsx", "xls");
@@ -121,12 +123,15 @@ public class PrevisionServiceImpl implements PrevisionService {
                 // L'import continue même si le parsing échoue
             }
 
-            // 8. Déclencher la détection d'anomalies (ne bloque pas en cas d'erreur)
+            // 8. Déclencher la détection automatique V2 après l'import
             try {
-                anomalieDetectionService.detecterAnomalies(projet, periodeDebut, periodeFin);
+                // Déterminer le mois de la période importée
+                int moisDetection = periodeDebut.getMonthValue();
+                int anneeDetection = periodeDebut.getYear();
+                anomalieDetectionV2Service.detecterAnomalies(anneeDetection, moisDetection, "ma");
+                log.info("Détection V2 lancée automatiquement pour {}/{}", moisDetection, anneeDetection);
             } catch (Exception e) {
-                log.error("Détection d'anomalies échouée pour projet {}: {}",
-                        projetId, e.getMessage());
+                log.error("Détection V2 échouée pour projet {}: {}", projetId, e.getMessage());
             }
 
             return mapToResponseDTO(saved);
@@ -325,6 +330,13 @@ public class PrevisionServiceImpl implements PrevisionService {
                 String nomComplet = getCellStringValue(row.getCell(1));
                 if (nomComplet == null || nomComplet.isBlank()) continue;
 
+                // Colonnes 10-11 : Date_Début et Date_Fin individuelles du collaborateur
+                LocalDate dateDebutCollab = parseDateFromCell(row.getCell(10));
+                LocalDate dateFinCollab = parseDateFromCell(row.getCell(11));
+                // Fallback : si les dates ne sont pas parsables, utiliser la période globale
+                if (dateDebutCollab == null) dateDebutCollab = periodeDebut;
+                if (dateFinCollab == null) dateFinCollab = periodeFin;
+
                 // Le taux d'affectation est 100% par défaut pour chaque collaborateur
                 // listé dans le fichier de prévision. C'est le croisement entre
                 // plusieurs projets qui génère les surcharges (>100%) et conflits.
@@ -333,17 +345,20 @@ public class PrevisionServiceImpl implements PrevisionService {
                 // Trouver ou créer le collaborateur
                 User collaborateur = findOrCreateCollaborateur(matricule, nomComplet);
 
-                // Créer l'affectation
+                // Créer l'affectation avec les dates individuelles du collaborateur
                 Affectation affectation = Affectation.builder()
                         .collaborateur(collaborateur)
                         .projet(projet)
                         .tauxAffectation(tauxAffectation)
-                        .dateDebut(periodeDebut)
-                        .dateFin(periodeFin)
+                        .dateDebut(dateDebutCollab)
+                        .dateFin(dateFinCollab)
                         .roleDansProjet("Collaborateur")
                         .build();
                 affectationRepository.save(affectation);
                 created++;
+
+                // Notifier le collaborateur de sa nouvelle affectation
+                notificationService.notifierAffectation(collaborateur, projet, tauxAffectation);
             }
 
             log.info("Import Excel : {} affectations créées pour le projet '{}' (période {}-{})",
@@ -488,6 +503,40 @@ public class PrevisionServiceImpl implements PrevisionService {
             case BLANK -> null;
             default -> null;
         };
+    }
+
+    /**
+     * Parse une date depuis une cellule Excel.
+     * Supporte les formats : date numérique Excel, "dd/MM/yyyy", "yyyy-MM-dd"
+     */
+    private LocalDate parseDateFromCell(Cell cell) {
+        if (cell == null) return null;
+        try {
+            if (cell.getCellType() == CellType.NUMERIC && DateUtil.isCellDateFormatted(cell)) {
+                return cell.getLocalDateTimeCellValue().toLocalDate();
+            }
+            if (cell.getCellType() == CellType.STRING) {
+                String val = cell.getStringCellValue().trim();
+                if (val.isEmpty()) return null;
+                // Try dd/MM/yyyy format
+                if (val.contains("/")) {
+                    String[] parts = val.split("/");
+                    if (parts.length == 3) {
+                        int day = Integer.parseInt(parts[0]);
+                        int month = Integer.parseInt(parts[1]);
+                        int year = Integer.parseInt(parts[2]);
+                        return LocalDate.of(year, month, day);
+                    }
+                }
+                // Try yyyy-MM-dd format
+                if (val.contains("-") && val.length() == 10) {
+                    return LocalDate.parse(val);
+                }
+            }
+        } catch (Exception e) {
+            // Ignore parse errors
+        }
+        return null;
     }
 
     private double getCellNumericValue(Cell cell) {

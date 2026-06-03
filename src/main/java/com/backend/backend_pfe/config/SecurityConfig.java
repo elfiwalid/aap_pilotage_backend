@@ -54,11 +54,23 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/api/auth/**").permitAll()
+                        .requestMatchers("/api/users/me").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/users").authenticated()
+                        .requestMatchers("/api/evaluations/**").authenticated()
+                        // Anomalies V2 — accessible to both RM and CHEF_PROJET
+                        .requestMatchers("/api/rm/anomalies-v2/**").hasAnyRole("RESOURCE_MANAGER", "CHEF_PROJET")
+                        // Resource Manager endpoints
+                        .requestMatchers("/api/rm/**").hasRole("RESOURCE_MANAGER")
+                        // Project endpoints — accessible to both CHEF_PROJET and RESOURCE_MANAGER
                         .requestMatchers(HttpMethod.POST, "/api/projets").hasRole("CHEF_PROJET")
-                        .requestMatchers(HttpMethod.GET, "/api/projets").hasRole("CHEF_PROJET")
+                        .requestMatchers(HttpMethod.GET, "/api/projets").hasAnyRole("CHEF_PROJET", "RESOURCE_MANAGER")
                         .requestMatchers("/api/projets/*/previsions/**").hasRole("CHEF_PROJET")
                         .requestMatchers("/api/previsions/**").hasRole("CHEF_PROJET")
-                        .requestMatchers("/api/anomalies/**").hasRole("CHEF_PROJET")
+                        // Anomalies — accessible to both CHEF_PROJET and RESOURCE_MANAGER
+                        .requestMatchers("/api/anomalies/**").hasAnyRole("CHEF_PROJET", "RESOURCE_MANAGER")
+                        // KPIs — accessible to RESOURCE_MANAGER
+                        .requestMatchers("/api/kpis/**").hasAnyRole("CHEF_PROJET", "RESOURCE_MANAGER")
+                        .requestMatchers("/api/collaborateur/**").hasRole("COLLABORATEUR")
                         .anyRequest().authenticated()
                 )
                 .authenticationProvider(authenticationProvider())

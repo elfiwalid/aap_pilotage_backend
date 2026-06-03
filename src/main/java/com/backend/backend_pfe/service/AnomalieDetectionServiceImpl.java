@@ -31,6 +31,7 @@ public class AnomalieDetectionServiceImpl implements AnomalieDetectionService {
     private final AffectationRepository affectationRepository;
     private final AnomalieRepository anomalieRepository;
     private final PrevisionRepository previsionRepository;
+    private final NotificationService notificationService;
 
     private static final double SEUIL_SURCHARGE = 100.0;
     private static final double SEUIL_SOUS_CHARGE = 50.0;
@@ -110,6 +111,14 @@ public class AnomalieDetectionServiceImpl implements AnomalieDetectionService {
                 .sum();
 
         if (tauxCumule > SEUIL_SURCHARGE) {
+            // Calculer la période réelle de chevauchement (min dateDebut → max dateFin)
+            LocalDate periodeReelleDebut = affectations.stream()
+                    .map(Affectation::getDateDebut).filter(d -> d != null)
+                    .max(LocalDate::compareTo).orElse(debut);
+            LocalDate periodeReelleFin = affectations.stream()
+                    .map(Affectation::getDateFin).filter(d -> d != null)
+                    .min(LocalDate::compareTo).orElse(fin);
+
             // Grouper par projet pour avoir le détail (nom + chef + taux)
             Map<Long, List<Affectation>> parProjet = affectations.stream()
                     .collect(Collectors.groupingBy(a -> a.getProjet().getId()));
@@ -133,7 +142,7 @@ public class AnomalieDetectionServiceImpl implements AnomalieDetectionService {
                     .titre("Surcharge: " + collaborateur.getPrenom() + " " + collaborateur.getNom())
                     .description(String.format(
                             "Taux cumulé: %.0f%% (seuil: 100%%). Projets: %s. Période: %s à %s",
-                            tauxCumule, projetsContribuants, debut, fin))
+                            tauxCumule, projetsContribuants, periodeReelleDebut, periodeReelleFin))
                     .typeAnomalie(TypeAnomalie.SURCHARGE)
                     .statut(StatutAnomalie.OUVERTE)
                     .dateDetection(LocalDateTime.now())
@@ -172,7 +181,9 @@ public class AnomalieDetectionServiceImpl implements AnomalieDetectionService {
                     .titre("Conflit: " + collaborateur.getPrenom() + " " + collaborateur.getNom())
                     .description(String.format(
                             "Affecté à %d projets simultanément: %s. Période: %s à %s",
-                            parProjet.size(), projetsConflictuels, debut, fin))
+                            parProjet.size(), projetsConflictuels,
+                            affectations.stream().map(Affectation::getDateDebut).filter(d -> d != null).max(LocalDate::compareTo).orElse(debut),
+                            affectations.stream().map(Affectation::getDateFin).filter(d -> d != null).min(LocalDate::compareTo).orElse(fin)))
                     .typeAnomalie(TypeAnomalie.CONFLIT_AFFECTATION)
                     .statut(StatutAnomalie.OUVERTE)
                     .dateDetection(LocalDateTime.now())
@@ -199,7 +210,9 @@ public class AnomalieDetectionServiceImpl implements AnomalieDetectionService {
                     .titre("Sous-charge: " + collaborateur.getPrenom() + " " + collaborateur.getNom())
                     .description(String.format(
                             "Taux cumulé: %.0f%% (seuil minimum: 50%%). Période: %s à %s",
-                            tauxCumule, debut, fin))
+                            tauxCumule,
+                            affectations.stream().map(Affectation::getDateDebut).filter(d -> d != null).min(LocalDate::compareTo).orElse(debut),
+                            affectations.stream().map(Affectation::getDateFin).filter(d -> d != null).max(LocalDate::compareTo).orElse(fin)))
                     .typeAnomalie(TypeAnomalie.DISPONIBILITE_INSUFFISANTE)
                     .statut(StatutAnomalie.OUVERTE)
                     .dateDetection(LocalDateTime.now())
@@ -233,7 +246,12 @@ public class AnomalieDetectionServiceImpl implements AnomalieDetectionService {
 
         // Persister
         anomalieRepository.saveAll(existantes); // mises à jour RESOLUE
-        anomalieRepository.saveAll(vraiementNouvelles); // nouvelles
+        List<Anomalie> creees = anomalieRepository.saveAll(vraiementNouvelles); // nouvelles
+
+        // Notifier le chef de projet pour chaque nouvelle anomalie
+        for (Anomalie a : creees) {
+            notificationService.notifierAnomalie(a);
+        }
     }
 
     /**

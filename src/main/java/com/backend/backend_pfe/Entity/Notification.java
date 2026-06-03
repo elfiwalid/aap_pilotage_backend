@@ -1,6 +1,7 @@
 package com.backend.backend_pfe.Entity;
 
 import com.backend.backend_pfe.enums.StatutNotification;
+import com.backend.backend_pfe.enums.TypeNotification;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -28,6 +29,9 @@ public class Notification {
 
     @Enumerated(EnumType.STRING)
     private StatutNotification statut;
+
+    @Enumerated(EnumType.STRING)
+    private TypeNotification type;
 
     @ManyToOne
     @JoinColumn(name = "expediteur_id")
