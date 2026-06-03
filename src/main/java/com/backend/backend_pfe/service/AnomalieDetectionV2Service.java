@@ -38,7 +38,4 @@ public interface AnomalieDetectionV2Service {
 
     /** Retourne les périodes pour un chef de projet spécifique. */
     List<int[]> getPeriodesDisponiblesParChef(Long chefProjetId);
-
-    /** Retourne les affectations détaillées d'un collaborateur pour un mois donné. */
-    List<java.util.Map<String, Object>> getAffectationsDetail(Long collaborateurId, int annee, int mois);
 }
