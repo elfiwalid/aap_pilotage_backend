@@ -4,9 +4,11 @@ import com.backend.backend_pfe.DTO.response.CollabDashboardDTO;
 import com.backend.backend_pfe.DTO.response.CollabPlanningJourDTO;
 import com.backend.backend_pfe.DTO.response.CollabProjetDTO;
 import com.backend.backend_pfe.Entity.Affectation;
+import com.backend.backend_pfe.Entity.AffectationTacheCollaborateur;
 import com.backend.backend_pfe.Entity.Projet;
 import com.backend.backend_pfe.Entity.User;
 import com.backend.backend_pfe.Repository.AffectationRepository;
+import com.backend.backend_pfe.Repository.AffectationTacheCollaborateurRepository;
 import com.backend.backend_pfe.Repository.UserRepository;
 import com.backend.backend_pfe.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +37,7 @@ public class CollaborateurServiceImpl implements CollaborateurService {
 
     private final AffectationRepository affectationRepository;
     private final UserRepository userRepository;
+    private final AffectationTacheCollaborateurRepository tacheRepository;
 
     /** Palette de couleurs déterministe assignée par projet. */
     private static final String[] PALETTE = {
@@ -122,6 +125,11 @@ public class CollaborateurServiceImpl implements CollaborateurService {
         YearMonth yearMonth = YearMonth.of(annee, mois);
         int daysInMonth = yearMonth.lengthOfMonth();
         int monthCapacity = countWorkingDays(yearMonth.atDay(1), yearMonth.atEndOfMonth());
+        LocalDate monthStart = yearMonth.atDay(1);
+        LocalDate monthEnd = yearMonth.atEndOfMonth();
+        List<AffectationTacheCollaborateur> tachesDuMois = tacheRepository
+                .findByCollaborateurAndDateTacheBetweenOrderByDateTacheAscOrdreJourAsc(
+                        collaborateur, monthStart, monthEnd);
 
         List<CollabPlanningJourDTO> planning = new ArrayList<>();
         for (int day = 1; day <= daysInMonth; day++) {
@@ -151,9 +159,17 @@ public class CollaborateurServiceImpl implements CollaborateurService {
                             })
                             .collect(Collectors.toList());
 
+            List<CollabPlanningJourDTO.TacheJourDTO> taches = isWeekend
+                    ? new ArrayList<>()
+                    : tachesDuMois.stream()
+                            .filter(t -> date.equals(t.getDateTache()))
+                            .map(this::toTacheJourDTO)
+                            .collect(Collectors.toList());
+
             planning.add(CollabPlanningJourDTO.builder()
                     .date(date)
                     .slots(slots)
+                    .taches(taches)
                     .build());
         }
         return planning;
@@ -197,6 +213,17 @@ public class CollaborateurServiceImpl implements CollaborateurService {
                 .couleur(colorFor(projet.getId()))
                 .avancement(computeAvancement(projet.getDateDebut(), projet.getDateFin()))
                 .tailleEquipe(tailleEquipe)
+                .build();
+    }
+
+    private CollabPlanningJourDTO.TacheJourDTO toTacheJourDTO(AffectationTacheCollaborateur tache) {
+        Projet projet = tache.getProjet();
+        return CollabPlanningJourDTO.TacheJourDTO.builder()
+                .id(tache.getId())
+                .projetId(projet.getId())
+                .projet(projet.getNom())
+                .tache(tache.getTache())
+                .ordreJour(tache.getOrdreJour())
                 .build();
     }
 
