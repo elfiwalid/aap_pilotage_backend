@@ -124,12 +124,19 @@ public class PrevisionServiceImpl implements PrevisionService {
             }
 
             // 8. Déclencher la détection automatique V2 après l'import
+            // On flush les affectations pour les rendre visibles à la détection
+            // et on enregistre les mois à recalculer pour la détection
             try {
-                // Déterminer le mois de la période importée
+                affectationRepository.flush();
                 int moisDetection = periodeDebut.getMonthValue();
                 int anneeDetection = periodeDebut.getYear();
                 anomalieDetectionV2Service.detecterAnomalies(anneeDetection, moisDetection, "ma");
                 log.info("Détection V2 lancée automatiquement pour {}/{}", moisDetection, anneeDetection);
+                // Si la période fin est dans un autre mois, recalculer ce mois aussi
+                if (periodeFin.getMonthValue() != moisDetection || periodeFin.getYear() != anneeDetection) {
+                    anomalieDetectionV2Service.detecterAnomalies(periodeFin.getYear(), periodeFin.getMonthValue(), "ma");
+                    log.info("Détection V2 lancée aussi pour {}/{}", periodeFin.getMonthValue(), periodeFin.getYear());
+                }
             } catch (Exception e) {
                 log.error("Détection V2 échouée pour projet {}: {}", projetId, e.getMessage());
             }
