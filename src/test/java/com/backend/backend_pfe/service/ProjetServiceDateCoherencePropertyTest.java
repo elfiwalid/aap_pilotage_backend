@@ -36,7 +36,7 @@ class ProjetServiceDateCoherencePropertyTest {
 
     private final ProjetRepository projetRepository = Mockito.mock(ProjetRepository.class);
     private final UserRepository userRepository = Mockito.mock(UserRepository.class);
-    private final ProjetServiceImpl projetService = new ProjetServiceImpl(projetRepository, userRepository, null);
+    private final ProjetServiceImpl projetService = new ProjetServiceImpl(projetRepository, userRepository, null, null, null);
 
     /**
      * Property 4: Cohérence des dates

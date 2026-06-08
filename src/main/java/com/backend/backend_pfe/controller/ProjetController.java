@@ -1,6 +1,7 @@
 package com.backend.backend_pfe.controller;
 
 import com.backend.backend_pfe.DTO.request.ProjetRequestDTO;
+import com.backend.backend_pfe.DTO.response.DashboardChefProjetDTO;
 import com.backend.backend_pfe.DTO.response.ProjetResponseDTO;
 import com.backend.backend_pfe.service.ProjetService;
 import jakarta.validation.Valid;
@@ -62,5 +63,22 @@ public class ProjetController {
     public ResponseEntity<List<ProjetResponseDTO>> getMesProjets(Authentication authentication) {
         List<ProjetResponseDTO> projets = projetService.getMesProjets(authentication);
         return ResponseEntity.ok(projets);
+    }
+
+    /**
+     * Tableau de bord complet du Chef de Projet.
+     * Retourne tous les KPIs (projets, collaborateurs, anomalies, graphiques)
+     * en un seul appel API.
+     *
+     * @param authentication the security context of the authenticated user
+     * @return DashboardChefProjetDTO containing all KPIs
+     */
+    @GetMapping("/dashboard")
+    @PreAuthorize("hasRole('CHEF_PROJET')")
+    public ResponseEntity<DashboardChefProjetDTO> getDashboard(
+            Authentication authentication,
+            @RequestParam(required = false) Integer annee,
+            @RequestParam(required = false) Integer mois) {
+        return ResponseEntity.ok(projetService.getDashboard(authentication, annee, mois));
     }
 }

@@ -36,6 +36,10 @@ public class DataSeeder implements CommandLineRunner {
                 "youssef.elamrani@soprabanking.com", "Collab@Staff2026!",
                 "MAT-COL-003", Role.COLLABORATEUR, "Collaborateur");
 
+        seedUser("Chaimaa", "Kaddouri",
+                "chaimaa.kaddouri@soprabanking.com", "Collab@Staff2026!",
+                "MAT-COL-006", Role.COLLABORATEUR, "Collaborateur");
+
         seedUser("Sara", "Idrissi",
                 "sara.idrissi@soprabanking.com", "Pm@Staff2026!",
                 "MAT-PM-004", Role.CHEF_PROJET, "Chef de Projet");

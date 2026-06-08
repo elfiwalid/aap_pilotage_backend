@@ -14,7 +14,7 @@ import java.util.List;
 public interface CollaborateurService {
 
     /** Données agrégées du dashboard (KPIs, charge mensuelle, projets). */
-    CollabDashboardDTO getDashboard(Authentication authentication);
+    CollabDashboardDTO getDashboard(Authentication authentication, Integer annee, Integer mois);
 
     /** Liste des projets assignés au collaborateur connecté. */
     List<CollabProjetDTO> getMesProjets(Authentication authentication);

@@ -28,8 +28,11 @@ public class CollaborateurController {
     /** GET /api/collaborateur/dashboard — KPIs, charge mensuelle, projets. */
     @GetMapping("/dashboard")
     @PreAuthorize("hasRole('COLLABORATEUR')")
-    public ResponseEntity<CollabDashboardDTO> getDashboard(Authentication authentication) {
-        return ResponseEntity.ok(collaborateurService.getDashboard(authentication));
+    public ResponseEntity<CollabDashboardDTO> getDashboard(
+            @RequestParam(required = false) Integer annee,
+            @RequestParam(required = false) Integer mois,
+            Authentication authentication) {
+        return ResponseEntity.ok(collaborateurService.getDashboard(authentication, annee, mois));
     }
 
     /** GET /api/collaborateur/projets — Projets assignés au collaborateur. */

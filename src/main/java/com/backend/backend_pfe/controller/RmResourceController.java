@@ -36,8 +36,10 @@ public class RmResourceController {
     /** GET /api/rm/dashboard — Données agrégées du dashboard RM. */
     @GetMapping("/dashboard")
     @PreAuthorize("hasRole('RESOURCE_MANAGER')")
-    public ResponseEntity<RmDashboardDTO> getDashboard() {
-        return ResponseEntity.ok(rmResourceService.getDashboard());
+    public ResponseEntity<RmDashboardDTO> getDashboard(
+            @RequestParam(required = false) Integer annee,
+            @RequestParam(required = false) Integer mois) {
+        return ResponseEntity.ok(rmResourceService.getDashboard(annee, mois));
     }
 
     /** GET /api/rm/projets — Liste de tous les projets avec leur équipe. */

@@ -44,14 +44,22 @@ public class CollaborateurServiceImpl implements CollaborateurService {
     };
 
     @Override
-    public CollabDashboardDTO getDashboard(Authentication authentication) {
+    public CollabDashboardDTO getDashboard(Authentication authentication, Integer anneeParam, Integer moisParam) {
         User collaborateur = resolveUser(authentication);
         List<Affectation> affectations = affectationRepository.findByCollaborateur(collaborateur);
         LocalDate today = LocalDate.now();
+        int year = anneeParam != null ? anneeParam : today.getYear();
+        int month = moisParam != null ? moisParam : today.getMonthValue();
 
-        // Projets actifs aujourd'hui (période en cours)
+        // Use the selected month for calculations
+        YearMonth selectedYm = YearMonth.of(year, month);
+        LocalDate monthStart = selectedYm.atDay(1);
+        LocalDate monthEnd = selectedYm.atEndOfMonth();
+
+        // Affectations active in the selected month
         List<Affectation> actives = affectations.stream()
-                .filter(a -> isActiveOn(a, today))
+                .filter(a -> a.getDateDebut() != null && a.getDateFin() != null)
+                .filter(a -> !a.getDateFin().isBefore(monthStart) && !a.getDateDebut().isAfter(monthEnd))
                 .toList();
 
         List<CollabProjetDTO> projets = affectations.stream()
@@ -59,21 +67,26 @@ public class CollaborateurServiceImpl implements CollaborateurService {
                 .sorted((a, b) -> b.getDateFin().compareTo(a.getDateFin()))
                 .toList();
 
-        double tauxCharge = actives.stream()
-                .mapToDouble(a -> a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0)
-                .sum();
+        // Calculate real charge based on jours ouvrables
+        int monthCapacity = countWorkingDays(monthStart, monthEnd);
+        int totalJours = actives.stream().mapToInt(a -> {
+            LocalDate effStart = a.getDateDebut().isBefore(monthStart) ? monthStart : a.getDateDebut();
+            LocalDate effEnd = a.getDateFin().isAfter(monthEnd) ? monthEnd : a.getDateFin();
+            return countWorkingDays(effStart, effEnd);
+        }).sum();
 
+        double tauxCharge = monthCapacity > 0 ? Math.round((double) totalJours / monthCapacity * 1000.0) / 10.0 : 0;
         double capaciteRestante = Math.max(0, 100 - tauxCharge);
 
         int projetsBientotTermines = (int) actives.stream()
                 .filter(a -> a.getDateFin() != null
-                        && !a.getDateFin().isBefore(today)
-                        && a.getDateFin().isBefore(today.plusDays(30)))
+                        && !a.getDateFin().isBefore(monthStart)
+                        && a.getDateFin().isBefore(monthEnd.plusDays(30)))
                 .count();
 
         List<CollabProjetDTO> projetsActifsDTO = projets.stream()
                 .filter(p -> p.getStatut() == com.backend.backend_pfe.enums.StatutProjet.EN_COURS
-                        || isActiveOnByDates(p.getDateDebut(), p.getDateFin(), today))
+                        || isActiveOnByDates(p.getDateDebut(), p.getDateFin(), monthStart))
                 .toList();
 
         int avancementMoyen = projetsActifsDTO.isEmpty() ? 0 :
@@ -83,12 +96,12 @@ public class CollaborateurServiceImpl implements CollaborateurService {
 
         return CollabDashboardDTO.builder()
                 .projetsAssignes(actives.size())
-                .tauxCharge(Math.round(tauxCharge * 10.0) / 10.0)
+                .tauxCharge(tauxCharge)
                 .capaciteRestante(Math.round(capaciteRestante * 10.0) / 10.0)
                 .projetsBientotTermines(projetsBientotTermines)
                 .avancementMoyen(avancementMoyen)
                 .projets(projets)
-                .chargeMensuelle(computeChargeMensuelle(affectations, today))
+                .chargeMensuelle(computeChargeMensuelle(affectations, selectedYm.atDay(15)))
                 .build();
     }
 
@@ -108,12 +121,12 @@ public class CollaborateurServiceImpl implements CollaborateurService {
 
         YearMonth yearMonth = YearMonth.of(annee, mois);
         int daysInMonth = yearMonth.lengthOfMonth();
+        int monthCapacity = countWorkingDays(yearMonth.atDay(1), yearMonth.atEndOfMonth());
 
         List<CollabPlanningJourDTO> planning = new ArrayList<>();
         for (int day = 1; day <= daysInMonth; day++) {
             LocalDate date = LocalDate.of(annee, mois, day);
 
-            // Les weekends sont des jours non ouvrables : pas d'affectation
             boolean isWeekend = date.getDayOfWeek() == java.time.DayOfWeek.SATURDAY
                     || date.getDayOfWeek() == java.time.DayOfWeek.SUNDAY;
 
@@ -121,12 +134,21 @@ public class CollaborateurServiceImpl implements CollaborateurService {
                     ? new ArrayList<>()
                     : affectations.stream()
                             .filter(a -> isActiveOn(a, date))
-                            .map(a -> CollabPlanningJourDTO.SlotDTO.builder()
-                                    .projetId(a.getProjet().getId())
-                                    .projet(a.getProjet().getNom())
-                                    .couleur(colorFor(a.getProjet().getId()))
-                                    .alloc(a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0)
-                                    .build())
+                            .map(a -> {
+                                // Calculate real % for this project in this month
+                                LocalDate mStart = yearMonth.atDay(1);
+                                LocalDate mEnd = yearMonth.atEndOfMonth();
+                                LocalDate effStart = a.getDateDebut().isBefore(mStart) ? mStart : a.getDateDebut();
+                                LocalDate effEnd = a.getDateFin().isAfter(mEnd) ? mEnd : a.getDateFin();
+                                int jours = countWorkingDays(effStart, effEnd);
+                                double pct = monthCapacity > 0 ? Math.round((double) jours / monthCapacity * 1000.0) / 10.0 : 0;
+                                return CollabPlanningJourDTO.SlotDTO.builder()
+                                        .projetId(a.getProjet().getId())
+                                        .projet(a.getProjet().getNom())
+                                        .couleur(colorFor(a.getProjet().getId()))
+                                        .alloc(pct)
+                                        .build();
+                            })
                             .collect(Collectors.toList());
 
             planning.add(CollabPlanningJourDTO.builder()
@@ -149,12 +171,25 @@ public class CollaborateurServiceImpl implements CollaborateurService {
                 .distinct()
                 .count();
 
+        // Calculate real allocation % based on jours ouvrables for the affectation month
+        double realTaux = 0;
+        if (a.getDateDebut() != null && a.getDateFin() != null) {
+            YearMonth affYm = YearMonth.from(a.getDateDebut());
+            LocalDate mStart = affYm.atDay(1);
+            LocalDate mEnd = affYm.atEndOfMonth();
+            int mCapacity = countWorkingDays(mStart, mEnd);
+            LocalDate effStart = a.getDateDebut().isBefore(mStart) ? mStart : a.getDateDebut();
+            LocalDate effEnd = a.getDateFin().isAfter(mEnd) ? mEnd : a.getDateFin();
+            int jours = countWorkingDays(effStart, effEnd);
+            realTaux = mCapacity > 0 ? Math.round((double) jours / mCapacity * 1000.0) / 10.0 : 0;
+        }
+
         return CollabProjetDTO.builder()
                 .id(projet.getId())
                 .nom(projet.getNom())
                 .description(projet.getDescription())
                 .role(a.getRoleDansProjet() != null ? a.getRoleDansProjet() : "Collaborateur")
-                .tauxAffectation(a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0)
+                .tauxAffectation(realTaux)
                 .dateDebut(projet.getDateDebut())
                 .dateFin(projet.getDateFin())
                 .statut(projet.getStatut())
@@ -191,14 +226,21 @@ public class CollaborateurServiceImpl implements CollaborateurService {
             YearMonth ym = start.plusMonths(i);
             LocalDate monthStart = ym.atDay(1);
             LocalDate monthEnd = ym.atEndOfMonth();
+            int monthCapacity = countWorkingDays(monthStart, monthEnd);
 
             List<Affectation> chevauchantes = affectations.stream()
                     .filter(a -> overlaps(a, monthStart, monthEnd))
                     .toList();
 
-            double taux = chevauchantes.stream()
-                    .mapToDouble(a -> a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0)
-                    .sum();
+            double taux = 0;
+            if (monthCapacity > 0) {
+                int totalJours = chevauchantes.stream().mapToInt(a -> {
+                    LocalDate effStart = a.getDateDebut().isBefore(monthStart) ? monthStart : a.getDateDebut();
+                    LocalDate effEnd = a.getDateFin().isAfter(monthEnd) ? monthEnd : a.getDateFin();
+                    return countWorkingDays(effStart, effEnd);
+                }).sum();
+                taux = Math.round((double) totalJours / monthCapacity * 1000.0) / 10.0;
+            }
 
             String moisLabel = capitalize(ym.getMonth().getDisplayName(TextStyle.SHORT, Locale.FRENCH))
                     .replace(".", "");
@@ -206,7 +248,7 @@ public class CollaborateurServiceImpl implements CollaborateurService {
             result.add(CollabDashboardDTO.ChargeMensuelleDTO.builder()
                     .mois(moisLabel)
                     .annee(ym.getYear())
-                    .tauxCharge(Math.round(taux * 10.0) / 10.0)
+                    .tauxCharge(taux)
                     .nombreProjets(chevauchantes.size())
                     .build());
         }
@@ -241,5 +283,19 @@ public class CollaborateurServiceImpl implements CollaborateurService {
         String email = authentication.getName();
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur introuvable"));
+    }
+
+    private int countWorkingDays(LocalDate start, LocalDate end) {
+        if (start == null || end == null || end.isBefore(start)) return 0;
+        int count = 0;
+        LocalDate d = start;
+        while (!d.isAfter(end)) {
+            java.time.DayOfWeek dow = d.getDayOfWeek();
+            if (dow != java.time.DayOfWeek.SATURDAY && dow != java.time.DayOfWeek.SUNDAY) {
+                count++;
+            }
+            d = d.plusDays(1);
+        }
+        return count;
     }
 }

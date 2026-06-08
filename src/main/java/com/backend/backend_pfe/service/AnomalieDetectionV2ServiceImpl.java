@@ -43,18 +43,21 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
     private final JoursOuvrablesConfigRepository joursOuvrablesConfigRepository;
     private final CalendrierService calendrierService;
     private final ProjetRepository projetRepository;
+    private final StaffingCalculService staffingCalculService;
+    private final SimulationWhatIfRepository simulationWhatIfRepository;
 
     @Override
     @Transactional
     public List<AnomalieV2> detecterAnomalies(int annee, int mois, String pays) {
         log.info("Lancement détection anomalies pour {}/{} (pays: {})", mois, annee, pays);
 
-        // 0. Supprimer les anomalies existantes pour ce mois (recalcul complet)
+        // 0. Détacher les simulations liées avant de supprimer les anomalies
+        simulationWhatIfRepository.nullifyAnomalieByPeriode(annee, mois);
         anomalieV2Repository.deleteByAnneeAndMois(annee, mois);
         anomalieV2Repository.flush();
 
         // 1. Récupérer la capacité mensuelle (jours ouvrables validés)
-        int capaciteMensuelle = getCapaciteMensuelle(annee, mois, pays);
+        int capaciteMensuelle = staffingCalculService.getCapaciteMensuelle(annee, mois, pays);
         log.info("Capacité mensuelle validée: {} jours", capaciteMensuelle);
 
         // 2. Récupérer tous les collaborateurs
@@ -71,7 +74,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
         for (User collab : tousCollaborateurs) {
             List<Affectation> affectations = affectationRepository.findByCollaborateur(collab).stream()
                     .filter(a -> a.getDateDebut() != null && a.getDateFin() != null)
-                    .filter(a -> overlaps(a.getDateDebut(), a.getDateFin(), monthStart, monthEnd))
+                    .filter(a -> staffingCalculService.overlaps(a.getDateDebut(), a.getDateFin(), monthStart, monthEnd))
                     .toList();
 
             if (affectations.isEmpty()) {
@@ -85,7 +88,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
             for (Affectation aff : affectations) {
                 LocalDate effectiveDebut = aff.getDateDebut().isBefore(monthStart) ? monthStart : aff.getDateDebut();
                 LocalDate effectiveFin = aff.getDateFin().isAfter(monthEnd) ? monthEnd : aff.getDateFin();
-                int jours = countJoursOuvrables(effectiveDebut, effectiveFin);
+                int jours = staffingCalculService.countJoursOuvrables(effectiveDebut, effectiveFin);
                 joursParAffectation.put(aff, jours);
             }
 
@@ -143,7 +146,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
         User collab = userRepository.findById(collaborateurId)
                 .orElseThrow(() -> new ResourceNotFoundException("Collaborateur introuvable"));
 
-        int capacite = getCapaciteMensuelle(annee, mois, "ma");
+        int capacite = staffingCalculService.getCapaciteMensuelle(annee, mois, "ma");
         if (capacite == 0) return 0;
 
         YearMonth ym = YearMonth.of(annee, mois);
@@ -152,11 +155,11 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
 
         int totalJours = affectationRepository.findByCollaborateur(collab).stream()
                 .filter(a -> a.getDateDebut() != null && a.getDateFin() != null)
-                .filter(a -> overlaps(a.getDateDebut(), a.getDateFin(), monthStart, monthEnd))
+                .filter(a -> staffingCalculService.overlaps(a.getDateDebut(), a.getDateFin(), monthStart, monthEnd))
                 .mapToInt(a -> {
                     LocalDate deb = a.getDateDebut().isBefore(monthStart) ? monthStart : a.getDateDebut();
                     LocalDate fin = a.getDateFin().isAfter(monthEnd) ? monthEnd : a.getDateFin();
-                    return countJoursOuvrables(deb, fin);
+                    return staffingCalculService.countJoursOuvrables(deb, fin);
                 })
                 .sum();
 
@@ -180,7 +183,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
         Set<Long> collaborateurIds = projetsChef.stream()
                 .flatMap(p -> affectationRepository.findByProjet(p).stream())
                 .filter(a -> a.getDateDebut() != null && a.getDateFin() != null)
-                .filter(a -> overlaps(a.getDateDebut(), a.getDateFin(), monthStart, monthEnd))
+                .filter(a -> staffingCalculService.overlaps(a.getDateDebut(), a.getDateFin(), monthStart, monthEnd))
                 .map(a -> a.getCollaborateur().getId())
                 .collect(Collectors.toSet());
 
@@ -234,45 +237,6 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
     // PRIVATE METHODS
     // ═══════════════════════════════════════════════════════
 
-    private int getCapaciteMensuelle(int annee, int mois, String pays) {
-        // D'abord chercher en base (jours validés par le RM)
-        Optional<JoursOuvrablesConfig> config = joursOuvrablesConfigRepository
-                .findByAnneeAndMoisAndPays(annee, mois, pays);
-        if (config.isPresent() && config.get().isValide()) {
-            return config.get().getJoursOuvrablesValide();
-        }
-        // Sinon calculer (weekends exclus, pas de fériés sans validation)
-        YearMonth ym = YearMonth.of(annee, mois);
-        int joursTotal = ym.lengthOfMonth();
-        int weekends = 0;
-        for (int d = 1; d <= joursTotal; d++) {
-            DayOfWeek dow = LocalDate.of(annee, mois, d).getDayOfWeek();
-            if (dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY) weekends++;
-        }
-        return joursTotal - weekends;
-    }
-
-    /**
-     * Compte les jours ouvrables entre deux dates (inclusives), excluant weekends.
-     */
-    private int countJoursOuvrables(LocalDate debut, LocalDate fin) {
-        if (debut == null || fin == null || fin.isBefore(debut)) return 0;
-        int count = 0;
-        LocalDate d = debut;
-        while (!d.isAfter(fin)) {
-            DayOfWeek dow = d.getDayOfWeek();
-            if (dow != DayOfWeek.SATURDAY && dow != DayOfWeek.SUNDAY) {
-                count++;
-            }
-            d = d.plusDays(1);
-        }
-        return count;
-    }
-
-    private boolean overlaps(LocalDate aDebut, LocalDate aFin, LocalDate bDebut, LocalDate bFin) {
-        return !aFin.isBefore(bDebut) && !aDebut.isAfter(bFin);
-    }
-
     /**
      * Détecte un conflit de dates entre affectations d'un même collaborateur.
      */
@@ -292,10 +256,10 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
                 // Conflit seulement entre projets différents
                 if (a.getProjet().getId().equals(b.getProjet().getId())) continue;
 
-                if (overlaps(a.getDateDebut(), a.getDateFin(), b.getDateDebut(), b.getDateFin())) {
+                if (staffingCalculService.overlaps(a.getDateDebut(), a.getDateFin(), b.getDateDebut(), b.getDateFin())) {
                     LocalDate overlapStart = a.getDateDebut().isAfter(b.getDateDebut()) ? a.getDateDebut() : b.getDateDebut();
                     LocalDate overlapEnd = a.getDateFin().isBefore(b.getDateFin()) ? a.getDateFin() : b.getDateFin();
-                    int days = countJoursOuvrables(overlapStart, overlapEnd);
+                    int days = staffingCalculService.countJoursOuvrables(overlapStart, overlapEnd);
 
                     if (days > 0) {
                         conflits.add(String.format("%s (%s→%s) vs %s (%s→%s) = %d jours",

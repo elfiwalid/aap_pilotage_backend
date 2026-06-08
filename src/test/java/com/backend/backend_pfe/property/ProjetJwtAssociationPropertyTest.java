@@ -41,7 +41,7 @@ class ProjetJwtAssociationPropertyTest {
     ProjetJwtAssociationPropertyTest() {
         this.projetRepository = Mockito.mock(ProjetRepository.class);
         this.userRepository = Mockito.mock(UserRepository.class);
-        this.projetService = new ProjetServiceImpl(projetRepository, userRepository, null);
+        this.projetService = new ProjetServiceImpl(projetRepository, userRepository, null, null, null);
     }
 
     /**

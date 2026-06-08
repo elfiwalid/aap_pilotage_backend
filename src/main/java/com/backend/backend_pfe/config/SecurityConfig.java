@@ -71,6 +71,8 @@ public class SecurityConfig {
                         // KPIs — accessible to RESOURCE_MANAGER
                         .requestMatchers("/api/kpis/**").hasAnyRole("CHEF_PROJET", "RESOURCE_MANAGER")
                         .requestMatchers("/api/collaborateur/**").hasRole("COLLABORATEUR")
+                        // What-If Simulation endpoints
+                        .requestMatchers("/api/simulations/what-if/**").hasRole("RESOURCE_MANAGER")
                         .anyRequest().authenticated()
                 )
                 .authenticationProvider(authenticationProvider())

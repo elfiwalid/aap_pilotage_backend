@@ -14,7 +14,7 @@ public interface RmResourceService {
     List<RmResourceDTO> getAllResources(Integer annee, Integer mois);
     List<RmProjetDTO> getAllProjets();
     List<RmConflitDTO> getConflits();
-    RmDashboardDTO getDashboard();
+    RmDashboardDTO getDashboard(Integer annee, Integer mois);
     void proposerAlternative(Long anomalieId, Long collaborateurId, Long projetId,
                              org.springframework.security.core.Authentication authentication);
 }

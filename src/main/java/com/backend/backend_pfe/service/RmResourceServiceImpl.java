@@ -8,6 +8,7 @@ import com.backend.backend_pfe.Entity.*;
 import com.backend.backend_pfe.Repository.*;
 import com.backend.backend_pfe.enums.Role;
 import com.backend.backend_pfe.enums.StatutAnomalie;
+import com.backend.backend_pfe.enums.TypeAnomalieV2;
 import com.backend.backend_pfe.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
@@ -33,6 +34,7 @@ public class RmResourceServiceImpl implements RmResourceService {
     private final AffectationRepository affectationRepository;
     private final ProjetRepository projetRepository;
     private final AnomalieRepository anomalieRepository;
+    private final AnomalieV2Repository anomalieV2Repository;
     private final PropositionRepository propositionRepository;
     private final NotificationService notificationService;
 
@@ -83,14 +85,45 @@ public class RmResourceServiceImpl implements RmResourceService {
         User chef = projet.getChefProjet();
         List<Affectation> affectations = affectationRepository.findByProjet(projet);
 
+        // Use the project's period to calculate real allocation percentages
+        LocalDate now = LocalDate.now();
+        YearMonth currentYm = YearMonth.from(now);
+        LocalDate monthStart = currentYm.atDay(1);
+        LocalDate monthEnd = currentYm.atEndOfMonth();
+        int monthCapacity = countWorkingDays(monthStart, monthEnd);
+
         List<RmProjetDTO.MembreEquipeDTO> equipe = affectations.stream()
-                .map(a -> RmProjetDTO.MembreEquipeDTO.builder()
-                        .id(a.getCollaborateur().getId())
-                        .nom(a.getCollaborateur().getNom())
-                        .prenom(a.getCollaborateur().getPrenom())
-                        .role(a.getRoleDansProjet() != null ? a.getRoleDansProjet() : "Collaborateur")
-                        .tauxAffectation(a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0)
-                        .build())
+                .map(a -> {
+                    // Calculate real % based on working days in this project for current month
+                    double realTaux;
+                    if (a.getDateDebut() != null && a.getDateFin() != null
+                            && !a.getDateFin().isBefore(monthStart) && !a.getDateDebut().isAfter(monthEnd)
+                            && monthCapacity > 0) {
+                        LocalDate effStart = a.getDateDebut().isBefore(monthStart) ? monthStart : a.getDateDebut();
+                        LocalDate effEnd = a.getDateFin().isAfter(monthEnd) ? monthEnd : a.getDateFin();
+                        int jours = countWorkingDays(effStart, effEnd);
+                        realTaux = Math.round((double) jours / monthCapacity * 1000.0) / 10.0;
+                    } else if (a.getDateDebut() != null && a.getDateFin() != null) {
+                        // Use the project's own period for calculation
+                        YearMonth affYm = YearMonth.from(a.getDateDebut());
+                        LocalDate affMonthStart = affYm.atDay(1);
+                        LocalDate affMonthEnd = affYm.atEndOfMonth();
+                        int affCapacity = countWorkingDays(affMonthStart, affMonthEnd);
+                        LocalDate effStart = a.getDateDebut().isBefore(affMonthStart) ? affMonthStart : a.getDateDebut();
+                        LocalDate effEnd = a.getDateFin().isAfter(affMonthEnd) ? affMonthEnd : a.getDateFin();
+                        int jours = countWorkingDays(effStart, effEnd);
+                        realTaux = affCapacity > 0 ? Math.round((double) jours / affCapacity * 1000.0) / 10.0 : 0;
+                    } else {
+                        realTaux = a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0;
+                    }
+                    return RmProjetDTO.MembreEquipeDTO.builder()
+                            .id(a.getCollaborateur().getId())
+                            .nom(a.getCollaborateur().getNom())
+                            .prenom(a.getCollaborateur().getPrenom())
+                            .role(a.getRoleDansProjet() != null ? a.getRoleDansProjet() : "Collaborateur")
+                            .tauxAffectation(realTaux)
+                            .build();
+                })
                 .collect(Collectors.toList());
 
         return RmProjetDTO.builder()
@@ -112,100 +145,113 @@ public class RmResourceServiceImpl implements RmResourceService {
 
     @Override
     @Transactional(readOnly = true)
-    public RmDashboardDTO getDashboard() {
+    public RmDashboardDTO getDashboard(Integer anneeParam, Integer moisParam) {
         LocalDate today = LocalDate.now();
+        int year = anneeParam != null ? anneeParam : today.getYear();
+        int month = moisParam != null ? moisParam : today.getMonthValue();
+        YearMonth selectedYm = YearMonth.of(year, month);
+        LocalDate monthStart = selectedYm.atDay(1);
+        LocalDate monthEnd = selectedYm.atEndOfMonth();
+
         List<User> collabs = userRepository.findByRole(Role.COLLABORATEUR);
         List<Projet> projets = projetRepository.findAll();
-        List<Anomalie> anomaliesOuvertes = anomalieRepository.findByStatut(StatutAnomalie.OUVERTE);
 
-        // Collaborateurs actifs (au moins 1 affectation active aujourd'hui)
+        // Collaborateurs actifs for the selected month
         int actifs = 0;
         int surcharges = 0;
         int sousUtilises = 0;
         double sumTaux = 0;
+        int monthCapacity = countWorkingDays(monthStart, monthEnd);
 
         for (User u : collabs) {
-            double taux = affectationRepository.findByCollaborateur(u).stream()
-                    .filter(a -> isActiveOn(a, today))
-                    .mapToDouble(a -> a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0)
-                    .sum();
-            if (taux > 0) {
-                actifs++;
-                sumTaux += taux;
-                if (taux > 100) surcharges++;
-                else if (taux < 80) sousUtilises++;
-            }
+            List<Affectation> affs = affectationRepository.findByCollaborateur(u).stream()
+                    .filter(a -> a.getDateDebut() != null && a.getDateFin() != null)
+                    .filter(a -> !a.getDateFin().isBefore(monthStart) && !a.getDateDebut().isAfter(monthEnd))
+                    .toList();
+            if (affs.isEmpty()) continue;
+
+            int totalJours = affs.stream().mapToInt(a -> {
+                LocalDate effStart = a.getDateDebut().isBefore(monthStart) ? monthStart : a.getDateDebut();
+                LocalDate effEnd = a.getDateFin().isAfter(monthEnd) ? monthEnd : a.getDateFin();
+                return countWorkingDays(effStart, effEnd);
+            }).sum();
+
+            double taux = monthCapacity > 0 ? (double) totalJours / monthCapacity * 100 : 0;
+            actifs++;
+            sumTaux += Math.min(taux, 100);
+            if (taux > 100) surcharges++;
+            else if (taux < 80) sousUtilises++;
         }
 
         double tauxStaffing = actifs > 0 ? Math.round(sumTaux / actifs * 10.0) / 10.0 : 0;
+
+        // Anomalies V2 for selected month
+        List<AnomalieV2> anomaliesV2 = anomalieV2Repository.findByAnneeAndMoisOrderByDateDetectionDesc(year, month);
+        int conflitsDetectes = anomaliesV2.size();
 
         // Répartition projets
         int enCours = (int) projets.stream().filter(p -> p.getStatut() == com.backend.backend_pfe.enums.StatutProjet.EN_COURS).count();
         int planifies = (int) projets.stream().filter(p -> p.getStatut() == com.backend.backend_pfe.enums.StatutProjet.PLANIFIE).count();
         int termines = (int) projets.stream().filter(p -> p.getStatut() == com.backend.backend_pfe.enums.StatutProjet.TERMINE).count();
 
-        // Top 5 anomalies
-        List<RmDashboardDTO.AnomalieResumeDTO> top5 = anomaliesOuvertes.stream()
+        // Top 5 anomalies from V2
+        List<RmDashboardDTO.AnomalieResumeDTO> top5 = anomaliesV2.stream()
                 .limit(5)
-                .map(a -> {
-                    User collab = a.getCollaborateur();
-                    double charge = affectationRepository.findByCollaborateur(collab).stream()
-                            .filter(aff -> isActiveOn(aff, today))
-                            .mapToDouble(aff -> aff.getTauxAffectation() != null ? aff.getTauxAffectation() : 0.0)
-                            .sum();
-                    String projetsStr = affectationRepository.findByCollaborateur(collab).stream()
-                            .filter(aff -> isActiveOn(aff, today))
-                            .map(aff -> aff.getProjet().getNom())
-                            .distinct()
-                            .collect(Collectors.joining(", "));
-                    String sev = charge > 150 ? "critical" : charge > 100 ? "high" : "medium";
-                    return RmDashboardDTO.AnomalieResumeDTO.builder()
-                            .id(a.getId())
-                            .type(a.getTypeAnomalie().name())
-                            .collaborateur(collab.getPrenom() + " " + collab.getNom())
-                            .projets(projetsStr)
-                            .charge(charge)
-                            .severite(sev)
-                            .build();
-                })
+                .map(a -> RmDashboardDTO.AnomalieResumeDTO.builder()
+                        .id(a.getId())
+                        .type(a.getTypeAnomalie().name())
+                        .collaborateur(a.getCollaborateurNom())
+                        .projets(a.getProjetsConcernes() != null ? a.getProjetsConcernes() : "")
+                        .charge(a.getTauxCharge())
+                        .severite(a.getTauxCharge() > 150 ? "critical" : a.getTauxCharge() > 100 ? "high" : "medium")
+                        .build())
                 .collect(Collectors.toList());
 
         return RmDashboardDTO.builder()
                 .totalCollaborateurs(collabs.size())
                 .collaborateursActifs(actifs)
                 .tauxStaffingGlobal(tauxStaffing)
-                .conflitsDetectes(anomaliesOuvertes.size())
+                .conflitsDetectes(conflitsDetectes)
                 .ressourcesSurchargees(surcharges)
                 .ressourcesSousUtilisees(sousUtilises)
                 .projetsEnCours(enCours)
                 .projetsPlanifies(planifies)
                 .projetsTermines(termines)
                 .anomaliesActives(top5)
-                .staffingMensuel(computeStaffingMensuel(collabs, today))
-                .anomaliesMensuelles(computeAnomaliesMensuelles(collabs, today))
+                .staffingMensuel(computeStaffingMensuel(collabs, selectedYm))
+                .anomaliesMensuelles(computeAnomaliesMensuelles(collabs, selectedYm))
                 .build();
     }
 
     /** Calcule le taux de staffing moyen pour chacun des 6 derniers mois */
-    private List<RmDashboardDTO.MoisStaffingDTO> computeStaffingMensuel(List<User> collabs, LocalDate today) {
+    private List<RmDashboardDTO.MoisStaffingDTO> computeStaffingMensuel(List<User> collabs, YearMonth referenceMonth) {
         List<RmDashboardDTO.MoisStaffingDTO> result = new ArrayList<>();
         String[] MOIS_LABELS = {"Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"};
 
         for (int i = 5; i >= 0; i--) {
-            YearMonth ym = YearMonth.from(today).minusMonths(i);
-            LocalDate midMonth = ym.atDay(15); // milieu du mois comme référence
+            YearMonth ym = referenceMonth.minusMonths(i);
+            LocalDate mStart = ym.atDay(1);
+            LocalDate mEnd = ym.atEndOfMonth();
+            int mCapacity = countWorkingDays(mStart, mEnd);
 
             int actifsMois = 0;
             double sumTaux = 0;
             for (User u : collabs) {
-                double taux = affectationRepository.findByCollaborateur(u).stream()
+                List<Affectation> affs = affectationRepository.findByCollaborateur(u).stream()
+                        .filter(a -> a.getDateDebut() != null && a.getDateFin() != null)
                         .filter(a -> overlapsMonth(a, ym))
-                        .mapToDouble(a -> a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0)
-                        .sum();
-                if (taux > 0) {
-                    actifsMois++;
-                    sumTaux += Math.min(taux, 100); // cap à 100 pour le taux de staffing
-                }
+                        .toList();
+                if (affs.isEmpty()) continue;
+
+                int totalJours = affs.stream().mapToInt(a -> {
+                    LocalDate effStart = a.getDateDebut().isBefore(mStart) ? mStart : a.getDateDebut();
+                    LocalDate effEnd = a.getDateFin().isAfter(mEnd) ? mEnd : a.getDateFin();
+                    return countWorkingDays(effStart, effEnd);
+                }).sum();
+
+                double taux = mCapacity > 0 ? (double) totalJours / mCapacity * 100 : 0;
+                actifsMois++;
+                sumTaux += Math.min(taux, 100);
             }
             double tauxMois = actifsMois > 0 ? Math.round(sumTaux / actifsMois * 10.0) / 10.0 : 0;
 
@@ -219,31 +265,17 @@ public class RmResourceServiceImpl implements RmResourceService {
     }
 
     /** Calcule le nombre d'anomalies par type pour chacun des 6 derniers mois */
-    private List<RmDashboardDTO.MoisAnomaliesDTO> computeAnomaliesMensuelles(List<User> collabs, LocalDate today) {
+    private List<RmDashboardDTO.MoisAnomaliesDTO> computeAnomaliesMensuelles(List<User> collabs, YearMonth referenceMonth) {
         List<RmDashboardDTO.MoisAnomaliesDTO> result = new ArrayList<>();
         String[] MOIS_LABELS = {"Jan", "Fév", "Mar", "Avr", "Mai", "Jun", "Jul", "Aoû", "Sep", "Oct", "Nov", "Déc"};
 
         for (int i = 5; i >= 0; i--) {
-            YearMonth ym = YearMonth.from(today).minusMonths(i);
-            int surchargeCount = 0;
-            int sousCount = 0;
-            int conflitCount = 0;
-
-            for (User u : collabs) {
-                double taux = affectationRepository.findByCollaborateur(u).stream()
-                        .filter(a -> overlapsMonth(a, ym))
-                        .mapToDouble(a -> a.getTauxAffectation() != null ? a.getTauxAffectation() : 0.0)
-                        .sum();
-                long nbProjets = affectationRepository.findByCollaborateur(u).stream()
-                        .filter(a -> overlapsMonth(a, ym))
-                        .map(a -> a.getProjet().getId())
-                        .distinct()
-                        .count();
-
-                if (taux > 100) surchargeCount++;
-                else if (taux > 0 && taux < 50) sousCount++;
-                if (nbProjets >= 2) conflitCount++;
-            }
+            YearMonth ym = referenceMonth.minusMonths(i);
+            // Use V2 anomalies data
+            List<AnomalieV2> anomaliesMonth = anomalieV2Repository.findByAnneeAndMoisOrderByDateDetectionDesc(ym.getYear(), ym.getMonthValue());
+            int surchargeCount = (int) anomaliesMonth.stream().filter(a -> a.getTypeAnomalie() == TypeAnomalieV2.SURCHARGE).count();
+            int sousCount = (int) anomaliesMonth.stream().filter(a -> a.getTypeAnomalie() == TypeAnomalieV2.SOUS_CHARGE || a.getTypeAnomalie() == TypeAnomalieV2.NON_STAFFE).count();
+            int conflitCount = (int) anomaliesMonth.stream().filter(a -> a.getTypeAnomalie() == TypeAnomalieV2.CONFLIT).count();
 
             result.add(RmDashboardDTO.MoisAnomaliesDTO.builder()
                     .mois(MOIS_LABELS[ym.getMonthValue() - 1])
