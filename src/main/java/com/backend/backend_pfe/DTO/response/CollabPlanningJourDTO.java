@@ -18,6 +18,7 @@ public class CollabPlanningJourDTO {
 
     private LocalDate date;
     private List<SlotDTO> slots;
+    private List<TacheJourDTO> taches;
 
     @Getter
     @Setter
@@ -29,5 +30,18 @@ public class CollabPlanningJourDTO {
         private String projet;
         private String couleur;
         private double alloc;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    @Builder
+    public static class TacheJourDTO {
+        private Long id;
+        private Long projetId;
+        private String projet;
+        private String tache;
+        private int ordreJour;
     }
 }
