@@ -20,6 +20,7 @@ public class UserProfileDTO {
     private String prenom;
     private String email;
     private String poste;
+    private String photoUrl;
     private String matricule;
     private String role;
     private Double tauxStaffing;

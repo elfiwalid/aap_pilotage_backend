@@ -40,6 +40,7 @@ public class UserServiceImpl implements UserService {
         user.setPrenom(request.getPrenom());
         user.setEmail(request.getEmail());
         user.setPoste(request.getPoste());
+        user.setPhotoUrl(request.getPhotoUrl());
 
         User saved = userRepository.save(user);
         return toDTO(saved);
@@ -69,6 +70,7 @@ public class UserServiceImpl implements UserService {
                 .prenom(user.getPrenom())
                 .email(user.getEmail())
                 .poste(user.getPoste())
+                .photoUrl(user.getPhotoUrl())
                 .matricule(user.getMatricule())
                 .role(user.getRole().name())
                 .tauxStaffing(user.getTauxStaffing())

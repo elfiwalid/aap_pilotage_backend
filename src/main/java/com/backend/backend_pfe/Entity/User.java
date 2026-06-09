@@ -34,6 +34,9 @@ public class User {
 
     private String poste;
 
+    @Column(columnDefinition = "TEXT")
+    private String photoUrl;
+
     @Column(unique = true)
     private String matricule;
 

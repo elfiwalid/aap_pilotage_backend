@@ -19,4 +19,10 @@ public interface NotificationRepository extends JpaRepository<Notification, Long
     List<Notification> findByExpediteur(User expediteur);
 
     long countByDestinataireAndStatut(User destinataire, StatutNotification statut);
+
+    boolean existsByDestinataireAndTypeAndTitreAndMessage(
+            User destinataire,
+            com.backend.backend_pfe.enums.TypeNotification type,
+            String titre,
+            String message);
 }

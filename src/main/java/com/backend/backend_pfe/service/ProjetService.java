@@ -33,4 +33,9 @@ public interface ProjetService {
      * If annee/mois are null, uses current month.
      */
     DashboardChefProjetDTO getDashboard(Authentication authentication, Integer annee, Integer mois);
+
+    /**
+     * Delete a project owned by the authenticated Chef de Projet.
+     */
+    void supprimerProjet(Long projetId, Authentication authentication);
 }

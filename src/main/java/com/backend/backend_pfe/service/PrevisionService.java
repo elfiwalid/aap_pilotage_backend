@@ -72,4 +72,9 @@ public interface PrevisionService {
      * @return a DTO containing the prevision statistics
      */
     PrevisionStatsDTO getStatistiques(Long previsionId, Authentication authentication);
+
+    /**
+     * Delete a prevision owned through a project managed by the authenticated Chef de Projet.
+     */
+    void supprimerPrevision(Long previsionId, Authentication authentication);
 }

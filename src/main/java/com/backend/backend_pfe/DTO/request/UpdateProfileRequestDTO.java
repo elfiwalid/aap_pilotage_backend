@@ -28,4 +28,6 @@ public class UpdateProfileRequestDTO {
     private String email;
 
     private String poste;
+
+    private String photoUrl;
 }

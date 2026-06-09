@@ -24,6 +24,10 @@ public interface AffectationTacheCollaborateurRepository
     List<AffectationTacheCollaborateur> findByAffectationInAndDateTacheBetween(
             Collection<Affectation> affectations, LocalDate debut, LocalDate fin);
 
+    void deleteByProjet(Projet projet);
+
+    void deleteByAffectationIn(Collection<Affectation> affectations);
+
     void deleteByAffectationInAndDateTacheBetween(
             Collection<Affectation> affectations, LocalDate debut, LocalDate fin);
 }
