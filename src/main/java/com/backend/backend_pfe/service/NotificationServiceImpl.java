@@ -87,6 +87,10 @@ public class NotificationServiceImpl implements NotificationService {
                                   String titre, String message, Anomalie anomalie) {
         if (destinataire == null) return;
         try {
+            if (notificationRepository.existsByDestinataireAndTypeAndTitreAndMessage(
+                    destinataire, type, titre, message)) {
+                return;
+            }
             Notification notif = Notification.builder()
                     .titre(titre)
                     .message(message)
