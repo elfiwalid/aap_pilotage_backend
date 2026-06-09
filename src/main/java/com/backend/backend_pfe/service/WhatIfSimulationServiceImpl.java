@@ -1,6 +1,9 @@
 package com.backend.backend_pfe.service;
 
 import com.backend.backend_pfe.DTO.request.SimulationRemplacementRequestDTO;
+import com.backend.backend_pfe.DTO.request.SimulationDepuisConflitRequestDTO;
+import com.backend.backend_pfe.DTO.response.CollaborateurDisponibleConflitDTO;
+import com.backend.backend_pfe.DTO.response.SimulationConflitContextDTO;
 import com.backend.backend_pfe.DTO.response.SimulationRemplacementResponseDTO;
 import com.backend.backend_pfe.DTO.request.SimulationSousChargeRequestDTO;
 import com.backend.backend_pfe.DTO.response.SimulationSousChargeResponseDTO;
@@ -14,6 +17,9 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
 @RequiredArgsConstructor
@@ -136,6 +142,183 @@ public class WhatIfSimulationServiceImpl implements WhatIfSimulationService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public SimulationConflitContextDTO getConflitContext(Long conflitId) {
+        AnomalieV2 conflit = getConflit(conflitId);
+        User source = getCollaborateurConflit(conflit);
+        LocalDate dateDebut = getConflitDateDebut(conflit);
+        LocalDate dateFin = getConflitDateFin(conflit);
+        List<Affectation> affectationsConflit = getAffectationsSourceSurConflit(source, dateDebut, dateFin);
+
+        List<SimulationConflitContextDTO.ProjetConflitDTO> projets = affectationsConflit.stream()
+                .map(affectation -> SimulationConflitContextDTO.ProjetConflitDTO.builder()
+                        .projetId(affectation.getProjet().getId())
+                        .projetNom(affectation.getProjet().getNom())
+                        .chefProjetNomComplet(buildFullName(affectation.getProjet().getChefProjet()))
+                        .dateDebut(affectation.getDateDebut())
+                        .dateFin(affectation.getDateFin())
+                        .tauxAffectation(affectation.getTauxAffectation())
+                        .joursOuvrables(staffingCalculService.countJoursOuvrables(
+                                maxDate(affectation.getDateDebut(), dateDebut),
+                                minDate(affectation.getDateFin(), dateFin)
+                        ))
+                        .build())
+                .toList();
+
+        return SimulationConflitContextDTO.builder()
+                .conflitId(conflit.getId())
+                .collaborateurSourceId(source.getId())
+                .collaborateurSourceNomComplet(buildFullName(source))
+                .matricule(source.getMatricule())
+                .dateDebut(dateDebut)
+                .dateFin(dateFin)
+                .annee(conflit.getAnnee())
+                .mois(conflit.getMois())
+                .tauxCharge(conflit.getTauxCharge())
+                .joursEnConflit(conflit.getJoursEnConflit())
+                .description(conflit.getDescription())
+                .projetsConflit(projets)
+                .build();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<CollaborateurDisponibleConflitDTO> getCollaborateursDisponiblesPourConflit(Long conflitId) {
+        AnomalieV2 conflit = getConflit(conflitId);
+        User source = getCollaborateurConflit(conflit);
+        LocalDate dateDebut = getConflitDateDebut(conflit);
+        LocalDate dateFin = getConflitDateFin(conflit);
+        double joursTransferes = staffingCalculService.calculerJoursDemandesPourPeriode(
+                dateDebut,
+                dateFin,
+                DEFAULT_TAUX_AFFECTATION
+        );
+        int capaciteMensuelle = staffingCalculService.getCapaciteMensuelle(
+                conflit.getAnnee(),
+                conflit.getMois(),
+                DEFAULT_COUNTRY
+        );
+
+        List<CollaborateurDisponibleConflitDTO> disponibles = userRepository.findByRole(Role.COLLABORATEUR)
+                .stream()
+                .filter(candidat -> !candidat.getId().equals(source.getId()))
+                .filter(candidat -> !Boolean.FALSE.equals(candidat.getDisponible()))
+                .map(candidat -> toCollaborateurDisponible(candidat, conflit, dateDebut, dateFin, joursTransferes, capaciteMensuelle))
+                .filter(dto -> dto != null)
+                .toList();
+
+        return disponibles;
+    }
+
+    @Override
+    public SimulationRemplacementResponseDTO simulerDepuisConflit(SimulationDepuisConflitRequestDTO request) {
+        AnomalieV2 conflit = getConflit(request.getConflitId());
+        User source = getCollaborateurConflit(conflit);
+        User cible = getUser(request.getCollaborateurCibleId(), "Collaborateur cible introuvable");
+        User resourceManager = getUser(request.getResourceManagerId(), "Resource Manager introuvable");
+        LocalDate dateDebut = getConflitDateDebut(conflit);
+        LocalDate dateFin = getConflitDateFin(conflit);
+        List<Affectation> affectationsConflit = getAffectationsSourceSurConflit(source, dateDebut, dateFin);
+
+        List<CollaborateurDisponibleConflitDTO> candidatsDisponibles =
+                getCollaborateursDisponiblesPourConflit(conflit.getId());
+
+        if (candidatsDisponibles.isEmpty()) {
+            throw new BusinessValidationException("Aucun collaborateur disponible pour ce conflit");
+        }
+
+        boolean candidatDisponible = candidatsDisponibles.stream()
+                .anyMatch(candidat -> candidat.getId().equals(request.getCollaborateurCibleId()));
+
+        if (!candidatDisponible) {
+            throw new BusinessValidationException("Collaborateur cible non disponible pour cette periode de conflit");
+        }
+
+        int capaciteMensuelle = staffingCalculService.getCapaciteMensuelle(
+                conflit.getAnnee(),
+                conflit.getMois(),
+                request.getPays() != null ? request.getPays() : DEFAULT_COUNTRY
+        );
+        double tauxAffectation = request.getTauxAffectation() != null
+                ? request.getTauxAffectation()
+                : DEFAULT_TAUX_AFFECTATION;
+        double joursTransferes = staffingCalculService.calculerJoursDemandesPourPeriode(
+                dateDebut,
+                dateFin,
+                tauxAffectation
+        );
+        double joursSourceAvant = staffingCalculService.calculerJoursDemandes(source, conflit.getAnnee(), conflit.getMois());
+        double joursCibleAvant = staffingCalculService.calculerJoursDemandes(cible, conflit.getAnnee(), conflit.getMois());
+        double joursSourceApres = Math.max(0, joursSourceAvant - joursTransferes);
+        double joursCibleApres = joursCibleAvant + joursTransferes;
+        double tauxSourceAvant = staffingCalculService.calculerTauxCharge(joursSourceAvant, capaciteMensuelle);
+        double tauxSourceApres = staffingCalculService.calculerTauxCharge(joursSourceApres, capaciteMensuelle);
+        double tauxCibleAvant = staffingCalculService.calculerTauxCharge(joursCibleAvant, capaciteMensuelle);
+        double tauxCibleApres = staffingCalculService.calculerTauxCharge(joursCibleApres, capaciteMensuelle);
+        boolean nouvelleSurcharge = tauxCibleApres > 100;
+        boolean nouveauConflit = !affectationRepository.findAffectationsChevauchantes(cible.getId(), dateDebut, dateFin).isEmpty();
+        boolean conflitCorrige = !nouveauConflit && !nouvelleSurcharge;
+        boolean sousChargeReduite = joursCibleAvant < capaciteMensuelle && joursCibleApres > joursCibleAvant;
+        ResultatSimulationWhatIf resultat = determineResult(nouveauConflit, nouvelleSurcharge);
+        String commentaire = buildCommentaire(resultat, conflitCorrige, nouvelleSurcharge, nouveauConflit, sousChargeReduite);
+        List<String> projetsConflit = affectationsConflit.stream()
+                .map(affectation -> affectation.getProjet().getNom())
+                .distinct()
+                .toList();
+
+        SimulationWhatIf simulation = saveSimulation(conflit, resourceManager, resultat, commentaire);
+        ScenarioWhatIf scenario = ScenarioWhatIf.builder()
+                .simulation(simulation)
+                .collaborateurSource(source)
+                .collaborateurCible(cible)
+                .projet(null)
+                .simulationGlobaleConflit(true)
+                .projetsConflit(String.join(" | ", projetsConflit))
+                .dateDebut(dateDebut)
+                .dateFin(dateFin)
+                .tauxAffectation(tauxAffectation)
+                .joursSourceAvant(joursSourceAvant)
+                .joursSourceApres(joursSourceApres)
+                .joursCibleAvant(joursCibleAvant)
+                .joursCibleApres(joursCibleApres)
+                .tauxSourceAvant(tauxSourceAvant)
+                .tauxSourceApres(tauxSourceApres)
+                .tauxCibleAvant(tauxCibleAvant)
+                .tauxCibleApres(tauxCibleApres)
+                .conflitCorrige(conflitCorrige)
+                .nouvelleSurcharge(nouvelleSurcharge)
+                .nouveauConflit(nouveauConflit)
+                .sousChargeReduite(sousChargeReduite)
+                .commentaire(commentaire)
+                .build();
+        scenarioWhatIfRepository.save(scenario);
+
+        return buildResponse(
+                simulation,
+                source,
+                cible,
+                resultat,
+                commentaire,
+                joursSourceAvant,
+                joursSourceApres,
+                joursCibleAvant,
+                joursCibleApres,
+                tauxSourceAvant,
+                tauxSourceApres,
+                tauxCibleAvant,
+                tauxCibleApres,
+                conflitCorrige,
+                nouvelleSurcharge,
+                nouveauConflit,
+                sousChargeReduite
+        ).toBuilder()
+                .dateDebut(dateDebut)
+                .dateFin(dateFin)
+                .projetsConflit(projetsConflit)
+                .build();
+    }
+
+    @Override
     public void validerSimulation(Long simulationId) {
         SimulationWhatIf simulation = simulationWhatIfRepository.findById(simulationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Simulation introuvable"));
@@ -154,6 +337,12 @@ public class WhatIfSimulationServiceImpl implements WhatIfSimulationService {
 
         ScenarioWhatIf scenario = scenarioWhatIfRepository.findBySimulationId(simulationId)
                 .orElseThrow(() -> new ResourceNotFoundException("Scénario introuvable"));
+
+        if (Boolean.TRUE.equals(scenario.getSimulationGlobaleConflit())) {
+            throw new BusinessValidationException(
+                    "Cette simulation est une proposition globale de conflit et doit etre traitee via la messagerie"
+            );
+        }
 
         if (simulation.getTypeSimulation() == TypeSimulationWhatIf.REMPLACEMENT) {
             appliquerRemplacement(scenario);
@@ -639,7 +828,112 @@ public class WhatIfSimulationServiceImpl implements WhatIfSimulationService {
                 .orElseThrow(() -> new ResourceNotFoundException("Projet introuvable"));
     }
 
+    private AnomalieV2 getConflit(Long id) {
+        AnomalieV2 conflit = getAnomalie(id);
+
+        if (conflit.getTypeAnomalie() != TypeAnomalieV2.CONFLIT) {
+            throw new BusinessValidationException("L'anomalie selectionnee n'est pas un conflit");
+        }
+
+        if (conflit.getConflitDateDebut() == null || conflit.getConflitDateFin() == null) {
+            throw new BusinessValidationException("La periode du conflit est introuvable");
+        }
+
+        return conflit;
+    }
+
+    private User getCollaborateurConflit(AnomalieV2 conflit) {
+        if (conflit.getCollaborateur() != null) {
+            return conflit.getCollaborateur();
+        }
+
+        if (conflit.getNumeroEmploye() != null && !conflit.getNumeroEmploye().isBlank()) {
+            return userRepository.findByMatricule(conflit.getNumeroEmploye())
+                    .orElseThrow(() -> new ResourceNotFoundException("Collaborateur source introuvable"));
+        }
+
+        throw new ResourceNotFoundException("Collaborateur source introuvable");
+    }
+
+    private LocalDate getConflitDateDebut(AnomalieV2 conflit) {
+        return conflit.getConflitDateDebut();
+    }
+
+    private LocalDate getConflitDateFin(AnomalieV2 conflit) {
+        return conflit.getConflitDateFin();
+    }
+
+    private List<Affectation> getAffectationsSourceSurConflit(User source, LocalDate dateDebut, LocalDate dateFin) {
+        Map<Long, Affectation> parProjet = new LinkedHashMap<>();
+
+        affectationRepository.findAffectationsChevauchantes(source.getId(), dateDebut, dateFin)
+                .stream()
+                .filter(affectation -> affectation.getProjet() != null)
+                .forEach(affectation -> parProjet.putIfAbsent(affectation.getProjet().getId(), affectation));
+
+        if (parProjet.size() < 2) {
+            throw new BusinessValidationException("Le conflit ne contient pas au moins deux projets chevauchants");
+        }
+
+        return parProjet.values().stream().toList();
+    }
+
+    private CollaborateurDisponibleConflitDTO toCollaborateurDisponible(User candidat,
+                                                                        AnomalieV2 conflit,
+                                                                        LocalDate dateDebut,
+                                                                        LocalDate dateFin,
+                                                                        double joursTransferes,
+                                                                        int capaciteMensuelle) {
+        List<Affectation> chevauchements = affectationRepository.findAffectationsChevauchantes(
+                candidat.getId(),
+                dateDebut,
+                dateFin
+        );
+
+        if (!chevauchements.isEmpty()) {
+            return null;
+        }
+
+        double joursAvant = staffingCalculService.calculerJoursDemandes(candidat, conflit.getAnnee(), conflit.getMois());
+        double tauxAvant = staffingCalculService.calculerTauxCharge(joursAvant, capaciteMensuelle);
+
+        if (tauxAvant >= 100) {
+            return null;
+        }
+
+        double joursApres = joursAvant + joursTransferes;
+        double tauxApres = staffingCalculService.calculerTauxCharge(joursApres, capaciteMensuelle);
+
+        if (tauxApres > 100) {
+            return null;
+        }
+
+        return CollaborateurDisponibleConflitDTO.builder()
+                .id(candidat.getId())
+                .nom(candidat.getNom())
+                .prenom(candidat.getPrenom())
+                .email(candidat.getEmail())
+                .poste(candidat.getPoste())
+                .matricule(candidat.getMatricule())
+                .tauxUtilisation(tauxAvant)
+                .tauxApresSimulation(tauxApres)
+                .disponibilite(Math.max(0, 100 - tauxAvant))
+                .joursDisponibles(Math.max(0, capaciteMensuelle - joursAvant))
+                .build();
+    }
+
+    private LocalDate maxDate(LocalDate first, LocalDate second) {
+        return first.isAfter(second) ? first : second;
+    }
+
+    private LocalDate minDate(LocalDate first, LocalDate second) {
+        return first.isBefore(second) ? first : second;
+    }
+
     private String buildFullName(User user) {
+        if (user == null) {
+            return null;
+        }
         return user.getPrenom() + " " + user.getNom();
     }
 

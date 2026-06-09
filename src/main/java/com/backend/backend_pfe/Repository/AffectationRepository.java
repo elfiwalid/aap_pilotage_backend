@@ -43,4 +43,19 @@ public interface AffectationRepository extends JpaRepository<Affectation, Long> 
             @Param("dateDebut") LocalDate dateDebut,
             @Param("dateFin") LocalDate dateFin
     );
+
+    @Query("""
+        SELECT a FROM Affectation a
+        WHERE a.collaborateur.id = :collaborateurId
+        AND a.projet.id = :projetId
+        AND a.dateDebut <= :dateFin
+        AND a.dateFin >= :dateDebut
+        ORDER BY a.dateDebut ASC
+    """)
+    List<Affectation> findAffectationsProjetSurPeriode(
+            @Param("collaborateurId") Long collaborateurId,
+            @Param("projetId") Long projetId,
+            @Param("dateDebut") LocalDate dateDebut,
+            @Param("dateFin") LocalDate dateFin
+    );
 }

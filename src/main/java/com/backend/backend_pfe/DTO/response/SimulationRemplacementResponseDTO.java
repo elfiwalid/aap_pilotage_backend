@@ -6,9 +6,12 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.time.LocalDate;
+import java.util.List;
+
 @Getter
 @Setter
-@Builder
+@Builder(toBuilder = true)
 public class SimulationRemplacementResponseDTO {
 
     private Long simulationId;
@@ -18,6 +21,9 @@ public class SimulationRemplacementResponseDTO {
     private ResultatSimulationWhatIf resultat;
 
     private String commentaire;
+    private LocalDate dateDebut;
+    private LocalDate dateFin;
+    private List<String> projetsConflit;
 
     private String collaborateurSource;
     private Double joursSourceAvant;
