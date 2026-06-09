@@ -12,7 +12,9 @@ import com.backend.backend_pfe.exception.BusinessValidationException;
 import com.backend.backend_pfe.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDate;
 import java.time.YearMonth;
@@ -39,6 +41,9 @@ public class ProjetServiceImpl implements ProjetService {
     private final NotificationService notificationService;
     private final AffectationRepository affectationRepository;
     private final AnomalieV2Repository anomalieV2Repository;
+    private final PrevisionRepository previsionRepository;
+    private final AffectationTacheCollaborateurRepository tacheCollaborateurRepository;
+    private final SimulationWhatIfRepository simulationWhatIfRepository;
 
     @Override
     public ProjetResponseDTO creerProjet(ProjetRequestDTO request, Authentication authentication) {
@@ -281,6 +286,35 @@ public class ProjetServiceImpl implements ProjetService {
                 .build();
     }
 
+    @Override
+    @Transactional
+    public void supprimerProjet(Long projetId, Authentication authentication) {
+        User chef = userRepository.findByEmail(authentication.getName())
+                .orElseThrow(() -> new ResourceNotFoundException("Chef de projet introuvable"));
+        Projet projet = projetRepository.findById(projetId)
+                .orElseThrow(() -> new ResourceNotFoundException("Projet introuvable"));
+        if (projet.getChefProjet() == null || !projet.getChefProjet().getId().equals(chef.getId())) {
+            throw new AccessDeniedException("Accès refusé");
+        }
+
+        List<Affectation> affectations = affectationRepository.findByProjet(projet);
+        List<Prevision> previsions = previsionRepository.findByProjet(projet);
+        List<AnomalieV2> anomalies = findAnomaliesLieesAuProjet(projet, previsions, affectations);
+        nullifySimulations(anomalies);
+
+        tacheCollaborateurRepository.deleteByProjet(projet);
+        if (!anomalies.isEmpty()) {
+            anomalieV2Repository.deleteAll(anomalies);
+        }
+        if (!affectations.isEmpty()) {
+            affectationRepository.deleteAll(affectations);
+        }
+        if (!previsions.isEmpty()) {
+            previsionRepository.deleteAll(previsions);
+        }
+        projetRepository.delete(projet);
+    }
+
     /** Calcule le % d'avancement basé sur la durée écoulée (0-100). */
     private int calcAvancement(Projet p, LocalDate today) {
         if (p.getStatut() == StatutProjet.TERMINE) return 100;
@@ -292,6 +326,47 @@ public class ProjetServiceImpl implements ProjetService {
         if (total == 0) return 100;
         long elapsed = p.getDateDebut().until(today, java.time.temporal.ChronoUnit.DAYS);
         return (int) Math.min(100, Math.round(elapsed * 100.0 / total));
+    }
+
+    private List<AnomalieV2> findAnomaliesLieesAuProjet(
+            Projet projet, List<Prevision> previsions, List<Affectation> affectations) {
+        Set<YearMonth> mois = new LinkedHashSet<>();
+        for (Prevision prevision : previsions) {
+            addMonths(mois, prevision.getPeriodeDebut(), prevision.getPeriodeFin());
+        }
+        for (Affectation affectation : affectations) {
+            addMonths(mois, affectation.getDateDebut(), affectation.getDateFin());
+        }
+
+        String nomProjet = projet.getNom() == null ? "" : projet.getNom().toLowerCase(Locale.ROOT);
+        return mois.stream()
+                .flatMap(ym -> anomalieV2Repository
+                        .findByAnneeAndMoisOrderByDateDetectionDesc(ym.getYear(), ym.getMonthValue())
+                        .stream())
+                .filter(anomalie -> anomalie.getProjetsConcernes() != null
+                        && anomalie.getProjetsConcernes().toLowerCase(Locale.ROOT).contains(nomProjet))
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toMap(AnomalieV2::getId, a -> a, (a, b) -> a, LinkedHashMap::new),
+                        map -> new ArrayList<>(map.values())));
+    }
+
+    private void addMonths(Set<YearMonth> target, LocalDate debut, LocalDate fin) {
+        if (debut == null || fin == null) {
+            return;
+        }
+        YearMonth current = YearMonth.from(debut);
+        YearMonth end = YearMonth.from(fin);
+        while (!current.isAfter(end)) {
+            target.add(current);
+            current = current.plusMonths(1);
+        }
+    }
+
+    private void nullifySimulations(List<AnomalieV2> anomalies) {
+        List<Long> ids = anomalies.stream().map(AnomalieV2::getId).toList();
+        if (!ids.isEmpty()) {
+            simulationWhatIfRepository.nullifyAnomalieIn(ids);
+        }
     }
 
     private ProjetResponseDTO mapToResponseDTO(Projet projet) {

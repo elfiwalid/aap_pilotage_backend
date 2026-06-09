@@ -6,10 +6,14 @@ import com.backend.backend_pfe.Entity.Prevision;
 import com.backend.backend_pfe.Entity.Projet;
 import com.backend.backend_pfe.Entity.User;
 import com.backend.backend_pfe.Repository.AffectationRepository;
+import com.backend.backend_pfe.Repository.AffectationTacheCollaborateurRepository;
+import com.backend.backend_pfe.Repository.AnomalieV2Repository;
 import com.backend.backend_pfe.Repository.PrevisionRepository;
 import com.backend.backend_pfe.Repository.ProjetRepository;
+import com.backend.backend_pfe.Repository.SimulationWhatIfRepository;
 import com.backend.backend_pfe.Repository.UserRepository;
 import com.backend.backend_pfe.enums.TypePrevision;
+import com.backend.backend_pfe.enums.TypeNotification;
 import com.backend.backend_pfe.exception.BusinessValidationException;
 import com.backend.backend_pfe.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -27,15 +31,19 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.backend.backend_pfe.Entity.Affectation;
+import com.backend.backend_pfe.Entity.AnomalieV2;
 import com.backend.backend_pfe.enums.Role;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -64,6 +72,9 @@ public class PrevisionServiceImpl implements PrevisionService {
     private final PasswordEncoder passwordEncoder;
     private final NotificationService notificationService;
     private final AnomalieDetectionV2Service anomalieDetectionV2Service;
+    private final AffectationTacheCollaborateurRepository tacheCollaborateurRepository;
+    private final AnomalieV2Repository anomalieV2Repository;
+    private final SimulationWhatIfRepository simulationWhatIfRepository;
 
     private static final long MAX_FILE_SIZE = 10L * 1024 * 1024; // 10 Mo
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of("xlsx", "xls");
@@ -124,12 +135,23 @@ public class PrevisionServiceImpl implements PrevisionService {
             }
 
             // 8. Déclencher la détection automatique V2 après l'import
+            // On flush les affectations pour les rendre visibles à la détection
+            // et on enregistre les mois à recalculer pour la détection
             try {
-                // Déterminer le mois de la période importée
+                affectationRepository.flush();
                 int moisDetection = periodeDebut.getMonthValue();
                 int anneeDetection = periodeDebut.getYear();
-                anomalieDetectionV2Service.detecterAnomalies(anneeDetection, moisDetection, "ma");
+                List<AnomalieV2> anomaliesMois = anomalieDetectionV2Service
+                        .detecterAnomalies(anneeDetection, moisDetection, "ma");
+                notifierAnomaliesV2Import(projet, anomaliesMois, anneeDetection, moisDetection);
                 log.info("Détection V2 lancée automatiquement pour {}/{}", moisDetection, anneeDetection);
+                // Si la période fin est dans un autre mois, recalculer ce mois aussi
+                if (periodeFin.getMonthValue() != moisDetection || periodeFin.getYear() != anneeDetection) {
+                    List<AnomalieV2> anomaliesFin = anomalieDetectionV2Service
+                            .detecterAnomalies(periodeFin.getYear(), periodeFin.getMonthValue(), "ma");
+                    notifierAnomaliesV2Import(projet, anomaliesFin, periodeFin.getYear(), periodeFin.getMonthValue());
+                    log.info("Détection V2 lancée aussi pour {}/{}", periodeFin.getMonthValue(), periodeFin.getYear());
+                }
             } catch (Exception e) {
                 log.error("Détection V2 échouée pour projet {}: {}", projetId, e.getMessage());
             }
@@ -209,6 +231,63 @@ public class PrevisionServiceImpl implements PrevisionService {
                 .typePrevision(prevision.getTypePrevision())
                 .dateImport(prevision.getDateImport())
                 .build();
+    }
+
+    @Override
+    @Transactional
+    public void supprimerPrevision(Long previsionId, Authentication authentication) {
+        User user = resolveUser(authentication);
+        Prevision prevision = previsionRepository.findById(previsionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Prévision introuvable"));
+        Projet projet = prevision.getProjet();
+        verifyOwnership(projet, user);
+
+        if (Boolean.TRUE.equals(prevision.getActive())) {
+            List<Affectation> affectationsPeriode = affectationRepository.findByProjet(projet).stream()
+                    .filter(a -> periodsOverlap(a.getDateDebut(), a.getDateFin(),
+                            prevision.getPeriodeDebut(), prevision.getPeriodeFin()))
+                    .toList();
+
+            if (!affectationsPeriode.isEmpty()) {
+                tacheCollaborateurRepository.deleteByAffectationIn(affectationsPeriode);
+                affectationRepository.deleteAll(affectationsPeriode);
+            }
+
+            List<AnomalieV2> anomalies = findAnomaliesLieesPrevision(prevision);
+            List<Long> anomalieIds = anomalies.stream().map(AnomalieV2::getId).toList();
+            if (!anomalieIds.isEmpty()) {
+                simulationWhatIfRepository.nullifyAnomalieIn(anomalieIds);
+                anomalieV2Repository.deleteAll(anomalies);
+            }
+        }
+
+        previsionRepository.delete(prevision);
+    }
+
+    private void notifierAnomaliesV2Import(
+            Projet projet, List<AnomalieV2> anomalies, int annee, int mois) {
+        if (projet == null || projet.getChefProjet() == null || anomalies == null || anomalies.isEmpty()) {
+            return;
+        }
+
+        String nomProjet = projet.getNom() == null ? "" : projet.getNom().toLowerCase(Locale.ROOT);
+        long totalProjet = anomalies.stream()
+                .filter(a -> a.getProjetsConcernes() != null
+                        && a.getProjetsConcernes().toLowerCase(Locale.ROOT).contains(nomProjet))
+                .count();
+        if (totalProjet == 0) {
+            return;
+        }
+
+        String periode = String.format("%02d/%d", mois, annee);
+        notificationService.creerNotification(
+                projet.getChefProjet(),
+                null,
+                TypeNotification.ANOMALIE,
+                "Anomalies V2 générées — " + projet.getNom(),
+                String.format("%d anomalie(s) V2 ont été générée(s) pour le projet « %s » sur la période %s.",
+                        totalProjet, projet.getNom(), periode),
+                null);
     }
 
     // --- Méthodes privées utilitaires ---
@@ -636,8 +715,34 @@ public class PrevisionServiceImpl implements PrevisionService {
                 .count();
     }
 
+    private List<AnomalieV2> findAnomaliesLieesPrevision(Prevision prevision) {
+        Projet projet = prevision.getProjet();
+        String nomProjet = projet.getNom() == null ? "" : projet.getNom().toLowerCase(Locale.ROOT);
+        List<AnomalieV2> result = new ArrayList<>();
+
+        YearMonth current = YearMonth.from(prevision.getPeriodeDebut());
+        YearMonth end = YearMonth.from(prevision.getPeriodeFin());
+        while (!current.isAfter(end)) {
+            result.addAll(anomalieV2Repository
+                    .findByAnneeAndMoisOrderByDateDetectionDesc(current.getYear(), current.getMonthValue())
+                    .stream()
+                    .filter(anomalie -> anomalie.getProjetsConcernes() != null
+                            && anomalie.getProjetsConcernes().toLowerCase(Locale.ROOT).contains(nomProjet))
+                    .toList());
+            current = current.plusMonths(1);
+        }
+
+        return result.stream()
+                .collect(Collectors.collectingAndThen(
+                        Collectors.toMap(AnomalieV2::getId, a -> a, (a, b) -> a, LinkedHashMap::new),
+                        map -> new ArrayList<>(map.values())));
+    }
+
     private boolean periodsOverlap(LocalDate aDebut, LocalDate aFin,
             LocalDate bDebut, LocalDate bFin) {
+        if (aDebut == null || aFin == null || bDebut == null || bFin == null) {
+            return false;
+        }
         return !aFin.isBefore(bDebut) && !aDebut.isAfter(bFin);
     }
 }

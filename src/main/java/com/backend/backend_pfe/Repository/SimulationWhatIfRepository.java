@@ -6,6 +6,8 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.Collection;
+
 public interface SimulationWhatIfRepository extends JpaRepository<SimulationWhatIf, Long> {
 
     @Modifying
@@ -16,4 +18,8 @@ public interface SimulationWhatIfRepository extends JpaRepository<SimulationWhat
         )
     """)
     void nullifyAnomalieByPeriode(@Param("annee") int annee, @Param("mois") int mois);
+
+    @Modifying
+    @Query("UPDATE SimulationWhatIf s SET s.anomalie = null WHERE s.anomalie.id IN :anomalieIds")
+    void nullifyAnomalieIn(@Param("anomalieIds") Collection<Long> anomalieIds);
 }
