@@ -72,6 +72,8 @@ public class SecurityConfig {
                         .requestMatchers("/api/kpis/**").hasAnyRole("CHEF_PROJET", "RESOURCE_MANAGER")
                         .requestMatchers("/api/collaborateur/**").hasRole("COLLABORATEUR")
                         // What-If Simulation endpoints
+                        .requestMatchers(HttpMethod.POST, "/api/simulations/what-if/*/accept").hasRole("CHEF_PROJET")
+                        .requestMatchers(HttpMethod.POST, "/api/simulations/what-if/*/reject").hasRole("CHEF_PROJET")
                         .requestMatchers("/api/simulations/what-if/**").hasRole("RESOURCE_MANAGER")
                         .anyRequest().authenticated()
                 )

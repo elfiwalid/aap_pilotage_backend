@@ -34,6 +34,12 @@ public class ScenarioWhatIf {
     @JoinColumn(name = "projet_id")
     private Projet projet;
 
+    @Column(name = "simulation_globale_conflit")
+    private Boolean simulationGlobaleConflit;
+
+    @Column(name = "projets_conflit", columnDefinition = "TEXT")
+    private String projetsConflit;
+
     @Column(name = "date_debut", nullable = false)
     private LocalDate dateDebut;
 
