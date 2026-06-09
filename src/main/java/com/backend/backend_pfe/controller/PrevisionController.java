@@ -123,4 +123,13 @@ public class PrevisionController {
                 previsionId, authentication);
         return ResponseEntity.ok(stats);
     }
+
+    @DeleteMapping("/previsions/{previsionId}")
+    @PreAuthorize("hasRole('CHEF_PROJET')")
+    public ResponseEntity<Void> supprimerPrevision(
+            @PathVariable Long previsionId,
+            Authentication authentication) {
+        previsionService.supprimerPrevision(previsionId, authentication);
+        return ResponseEntity.noContent().build();
+    }
 }

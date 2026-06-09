@@ -9,6 +9,7 @@ import com.backend.backend_pfe.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.DayOfWeek;
@@ -241,7 +242,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
      * Détecte un conflit de dates entre affectations d'un même collaborateur.
      */
     private AnomalieV2 detecterConflit(User collab, List<Affectation> affectations,
-            int annee, int mois, int capacite, int totalJours) {
+                                       int annee, int mois, int capacite, int totalJours) {
         // Trouver les paires d'affectations qui se chevauchent (projets différents)
         List<String> conflits = new ArrayList<>();
         LocalDate conflitDebut = null;
@@ -282,7 +283,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
                 .collect(Collectors.joining(" | "));
 
         String desc = String.format("%s est demandé sur plusieurs projets avec des dates qui se chevauchent. " +
-                "Conflits: %s. Total %d jours en conflit.",
+                        "Conflits: %s. Total %d jours en conflit.",
                 collab.getPrenom() + " " + collab.getNom(),
                 String.join("; ", conflits), joursConflit);
 
@@ -308,7 +309,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
     }
 
     private AnomalieV2 buildSurcharge(User collab, List<Affectation> affectations,
-            Map<Affectation, Integer> joursParAff, int annee, int mois, int capacite, int totalJours) {
+                                      Map<Affectation, Integer> joursParAff, int annee, int mois, int capacite, int totalJours) {
         int depassement = totalJours - capacite;
         double taux = capacite > 0 ? Math.round((double) totalJours / capacite * 1000.0) / 10.0 : 0;
 
@@ -317,7 +318,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
                 .collect(Collectors.joining(" | "));
 
         String desc = String.format("%s est en surcharge: %d jours demandés pour une capacité de %d jours " +
-                "(taux: %.1f%%, dépassement: %d jours). Projets: %s",
+                        "(taux: %.1f%%, dépassement: %d jours). Projets: %s",
                 collab.getPrenom() + " " + collab.getNom(), totalJours, capacite, taux, depassement, projets);
 
         return AnomalieV2.builder()
@@ -340,7 +341,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
     }
 
     private AnomalieV2 buildSousCharge(User collab, List<Affectation> affectations,
-            Map<Affectation, Integer> joursParAff, int annee, int mois, int capacite, int totalJours) {
+                                       Map<Affectation, Integer> joursParAff, int annee, int mois, int capacite, int totalJours) {
         int disponibles = capacite - totalJours;
         double taux = capacite > 0 ? Math.round((double) totalJours / capacite * 1000.0) / 10.0 : 0;
 
@@ -349,7 +350,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
                 .collect(Collectors.joining(" | "));
 
         String desc = String.format("%s est en sous-charge: %d jours demandés pour une capacité de %d jours " +
-                "(taux: %.1f%%, %d jours disponibles). Projets: %s",
+                        "(taux: %.1f%%, %d jours disponibles). Projets: %s",
                 collab.getPrenom() + " " + collab.getNom(), totalJours, capacite, taux, disponibles, projets);
 
         return AnomalieV2.builder()
@@ -373,7 +374,7 @@ public class AnomalieDetectionV2ServiceImpl implements AnomalieDetectionV2Servic
 
     private AnomalieV2 buildNonStaffe(User collab, int annee, int mois, int capacite) {
         String desc = String.format("%s n'est affecté à aucun projet pour %02d/%d. " +
-                "Capacité disponible: %d jours.",
+                        "Capacité disponible: %d jours.",
                 collab.getPrenom() + " " + collab.getNom(), mois, annee, capacite);
 
         return AnomalieV2.builder()
