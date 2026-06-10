@@ -1,0 +1,35 @@
+{
+  "dataset": "C:\\Users\\ieljalili\\OneDrive - Axway Software\\Desktop\\staff2staff-pfe\\aap_pilotage_backend\\ml\\datasets\\synthetic_resource_forecasting_dataset.csv",
+  "rows": 5000,
+  "features": [
+    "mois",
+    "annee",
+    "duree_projet_jours",
+    "nb_collaborateurs_actuels",
+    "charge_moyenne",
+    "charge_max",
+    "nb_conflits",
+    "nb_surcharges",
+    "nb_sous_charges",
+    "nb_anomalies_total",
+    "nb_collaborateurs_concernes"
+  ],
+  "target": "target_besoin_ressources_mois_suivant",
+  "test_size": 0.2,
+  "random_state": 20260609,
+  "models": {
+    "Linear Regression": {
+      "mae": 11.5775,
+      "rmse": 22.4014,
+      "r2": 0.8936
+    },
+    "Random Forest Regressor": {
+      "mae": 11.8229,
+      "rmse": 23.2256,
+      "r2": 0.8857
+    }
+  },
+  "best_model": "Linear Regression",
+  "selection_metric": "rmse",
+  "model_file": "C:\\Users\\ieljalili\\OneDrive - Axway Software\\Desktop\\staff2staff-pfe\\aap_pilotage_backend\\ml\\models\\resource_forecasting_model.pkl"
+}
