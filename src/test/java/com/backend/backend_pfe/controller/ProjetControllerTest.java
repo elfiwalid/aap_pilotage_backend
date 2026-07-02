@@ -8,6 +8,7 @@ import com.backend.backend_pfe.exception.BusinessValidationException;
 import com.backend.backend_pfe.exception.GlobalExceptionHandler;
 import com.backend.backend_pfe.security.JwtAuthenticationFilter;
 import com.backend.backend_pfe.security.JwtService;
+import com.backend.backend_pfe.service.PmRapportV2Service;
 import com.backend.backend_pfe.service.ProjetService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -52,6 +53,9 @@ class ProjetControllerTest {
 
     @MockitoBean
     private ProjetService projetService;
+
+    @MockitoBean
+    private PmRapportV2Service pmRapportV2Service;
 
     @MockitoBean
     private JwtService jwtService;

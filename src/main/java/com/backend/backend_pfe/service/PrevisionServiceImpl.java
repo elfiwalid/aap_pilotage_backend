@@ -35,6 +35,7 @@ import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -107,7 +108,7 @@ public class PrevisionServiceImpl implements PrevisionService {
         }
 
         // 5. Archiver les anciennes prévisions actives du même type
-        archivePreviousActive(projet, typePrevision);
+        replaceExistingImportData(projet, typePrevision, periodeDebut, periodeFin);
 
         // 6. Créer et persister la nouvelle prévision
         try {
@@ -131,6 +132,7 @@ public class PrevisionServiceImpl implements PrevisionService {
             } catch (Exception e) {
                 log.error("Parsing des affectations échoué pour projet {}: {}",
                         projetId, e.getMessage());
+                throw new BusinessValidationException("Le fichier de prévision est invalide ou illisible.");
                 // L'import continue même si le parsing échoue
             }
 
@@ -154,6 +156,7 @@ public class PrevisionServiceImpl implements PrevisionService {
                 }
             } catch (Exception e) {
                 log.error("Détection V2 échouée pour projet {}: {}", projetId, e.getMessage());
+                throw new BusinessValidationException("La détection des anomalies V2 a échoué.");
             }
 
             return mapToResponseDTO(saved);
@@ -328,14 +331,36 @@ public class PrevisionServiceImpl implements PrevisionService {
         }
     }
 
-    private void archivePreviousActive(Projet projet, TypePrevision typePrevision) {
-        List<Prevision> actives = previsionRepository
-                .findByProjetAndTypePrevisionAndActiveTrue(projet, typePrevision);
-        for (Prevision p : actives) {
-            p.setActive(false);
+    private void replaceExistingImportData(
+            Projet projet, TypePrevision typePrevision, LocalDate periodeDebut, LocalDate periodeFin) {
+        List<Affectation> affectationsPeriode = affectationRepository.findByProjet(projet).stream()
+                .filter(a -> periodsOverlap(a.getDateDebut(), a.getDateFin(), periodeDebut, periodeFin))
+                .toList();
+
+        if (!affectationsPeriode.isEmpty()) {
+            tacheCollaborateurRepository.deleteByAffectationIn(affectationsPeriode);
+            affectationRepository.deleteAll(affectationsPeriode);
+            log.info("Supprime {} anciennes affectations/taches pour le projet {} sur la periode {}-{}",
+                    affectationsPeriode.size(), projet.getNom(), periodeDebut, periodeFin);
         }
-        if (!actives.isEmpty()) {
-            previsionRepository.saveAll(actives);
+
+        List<AnomalieV2> anomalies = findAnomaliesLieesProjetSurPeriode(projet, periodeDebut, periodeFin);
+        List<Long> anomalieIds = anomalies.stream().map(AnomalieV2::getId).toList();
+        if (!anomalieIds.isEmpty()) {
+            simulationWhatIfRepository.nullifyAnomalieIn(anomalieIds);
+            anomalieV2Repository.deleteAll(anomalies);
+            log.info("Supprime {} anciennes anomalies V2 liees au projet {} sur la periode {}-{}",
+                    anomalies.size(), projet.getNom(), periodeDebut, periodeFin);
+        }
+
+        List<Prevision> anciennesPrevisions = previsionRepository.findByProjet(projet).stream()
+                .filter(p -> p.getTypePrevision() == typePrevision)
+                .filter(p -> periodsOverlap(p.getPeriodeDebut(), p.getPeriodeFin(), periodeDebut, periodeFin))
+                .toList();
+        if (!anciennesPrevisions.isEmpty()) {
+            previsionRepository.deleteAll(anciennesPrevisions);
+            log.info("Supprime {} anciennes previsions pour le projet {} sur la periode {}-{}",
+                    anciennesPrevisions.size(), projet.getNom(), periodeDebut, periodeFin);
         }
     }
 
@@ -385,16 +410,6 @@ public class PrevisionServiceImpl implements PrevisionService {
 
             // Supprimer les anciennes affectations de ce projet pour cette période
             // (pour éviter les doublons lors de ré-imports)
-            List<Affectation> existantes = affectationRepository.findByProjet(projet);
-            List<Affectation> aSupprimer = existantes.stream()
-                    .filter(a -> periodsOverlap(a.getDateDebut(), a.getDateFin(), periodeDebut, periodeFin))
-                    .toList();
-            if (!aSupprimer.isEmpty()) {
-                affectationRepository.deleteAll(aSupprimer);
-                log.info("Supprimé {} anciennes affectations pour le projet {} sur la période {}-{}",
-                        aSupprimer.size(), projet.getNom(), periodeDebut, periodeFin);
-            }
-
             // Parser chaque ligne de données
             int created = 0;
             for (int i = headerRowIdx + 1; i <= sheet.getLastRowNum(); i++) {
@@ -443,8 +458,11 @@ public class PrevisionServiceImpl implements PrevisionService {
             log.info("Import Excel : {} affectations créées pour le projet '{}' (période {}-{})",
                     created, projet.getNom(), periodeDebut, periodeFin);
 
+        } catch (BusinessValidationException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Erreur lors du parsing Excel pour créer les affectations: {}", e.getMessage(), e);
+            throw new BusinessValidationException("Le fichier de prévision est invalide ou illisible.");
         }
     }
 
@@ -473,10 +491,26 @@ public class PrevisionServiceImpl implements PrevisionService {
      * Mot de passe par défaut : Collab@Staff2026!
      */
     private User findOrCreateCollaborateur(String matricule, String nomComplet) {
+        String normalizedMatricule = matricule == null ? "" : matricule.trim();
+
         // 1. Chercher par matricule
-        Optional<User> byMatricule = userRepository.findByMatricule(matricule);
-        if (byMatricule.isPresent()) {
-            return byMatricule.get();
+        if (!normalizedMatricule.isBlank()) {
+            Optional<User> byMatricule = userRepository.findByMatricule(normalizedMatricule)
+                    .filter(user -> user.getRole() == Role.COLLABORATEUR);
+            if (byMatricule.isPresent()) {
+                return byMatricule.get();
+            }
+        }
+
+        Optional<User> byNormalizedName = findExistingCollaborateurByName(nomComplet);
+        if (byNormalizedName.isPresent()) {
+            User existing = byNormalizedName.get();
+            if (!normalizedMatricule.isBlank()
+                    && (existing.getMatricule() == null || existing.getMatricule().isBlank())) {
+                existing.setMatricule(normalizedMatricule);
+                userRepository.save(existing);
+            }
+            return existing;
         }
 
         // 2. Parser le nom complet (format "NOM PRENOM" ou "NOM PRENOM1 PRENOM2")
@@ -499,8 +533,9 @@ public class PrevisionServiceImpl implements PrevisionService {
         if (byEmail.isPresent()) {
             // Mettre à jour le matricule si manquant
             User existing = byEmail.get();
-            if (existing.getMatricule() == null || existing.getMatricule().isBlank()) {
-                existing.setMatricule(matricule);
+            if (!normalizedMatricule.isBlank()
+                    && (existing.getMatricule() == null || existing.getMatricule().isBlank())) {
+                existing.setMatricule(normalizedMatricule);
                 userRepository.save(existing);
             }
             return existing;
@@ -512,7 +547,7 @@ public class PrevisionServiceImpl implements PrevisionService {
                 .nom(nom)
                 .email(email)
                 .password(passwordEncoder.encode("Collab@Staff2026!"))
-                .matricule(matricule)
+                .matricule(normalizedMatricule.isBlank() ? null : normalizedMatricule)
                 .role(Role.COLLABORATEUR)
                 .poste("Collaborateur")
                 .tauxStaffing(100.0)
@@ -521,8 +556,36 @@ public class PrevisionServiceImpl implements PrevisionService {
 
         User saved = userRepository.save(newUser);
         log.info("✔ Collaborateur créé automatiquement : {} {} ({}) - matricule {}",
-                prenom, nom, email, matricule);
+                prenom, nom, email, normalizedMatricule);
         return saved;
+    }
+
+    private Optional<User> findExistingCollaborateurByName(String nomComplet) {
+        String importedNameKey = normalizePersonNameKey(nomComplet);
+        if (importedNameKey.isBlank()) {
+            return Optional.empty();
+        }
+
+        return userRepository.findByRole(Role.COLLABORATEUR).stream()
+                .filter(user -> normalizePersonNameKey(user.getNom() + " " + user.getPrenom())
+                        .equals(importedNameKey))
+                .findFirst();
+    }
+
+    private String normalizePersonNameKey(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = removeAccents(value)
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim();
+        if (normalized.isBlank()) {
+            return "";
+        }
+        return java.util.Arrays.stream(normalized.split("\\s+"))
+                .sorted()
+                .collect(Collectors.joining(" "));
     }
 
     /**
@@ -716,26 +779,39 @@ public class PrevisionServiceImpl implements PrevisionService {
     }
 
     private List<AnomalieV2> findAnomaliesLieesPrevision(Prevision prevision) {
-        Projet projet = prevision.getProjet();
+        return findAnomaliesLieesProjetSurPeriode(prevision.getProjet(),
+                prevision.getPeriodeDebut(), prevision.getPeriodeFin());
+    }
+
+    private List<AnomalieV2> findAnomaliesLieesProjetSurPeriode(
+            Projet projet, LocalDate periodeDebut, LocalDate periodeFin) {
         String nomProjet = projet.getNom() == null ? "" : projet.getNom().toLowerCase(Locale.ROOT);
         List<AnomalieV2> result = new ArrayList<>();
 
-        YearMonth current = YearMonth.from(prevision.getPeriodeDebut());
-        YearMonth end = YearMonth.from(prevision.getPeriodeFin());
-        while (!current.isAfter(end)) {
+        for (YearMonth current : monthsBetween(periodeDebut, periodeFin)) {
             result.addAll(anomalieV2Repository
                     .findByAnneeAndMoisOrderByDateDetectionDesc(current.getYear(), current.getMonthValue())
                     .stream()
                     .filter(anomalie -> anomalie.getProjetsConcernes() != null
                             && anomalie.getProjetsConcernes().toLowerCase(Locale.ROOT).contains(nomProjet))
                     .toList());
-            current = current.plusMonths(1);
         }
 
         return result.stream()
                 .collect(Collectors.collectingAndThen(
                         Collectors.toMap(AnomalieV2::getId, a -> a, (a, b) -> a, LinkedHashMap::new),
                         map -> new ArrayList<>(map.values())));
+    }
+
+    private Set<YearMonth> monthsBetween(LocalDate debut, LocalDate fin) {
+        Set<YearMonth> months = new HashSet<>();
+        YearMonth current = YearMonth.from(debut);
+        YearMonth end = YearMonth.from(fin);
+        while (!current.isAfter(end)) {
+            months.add(current);
+            current = current.plusMonths(1);
+        }
+        return months;
     }
 
     private boolean periodsOverlap(LocalDate aDebut, LocalDate aFin,

@@ -1,5 +1,6 @@
 package com.backend.backend_pfe.DTO.response;
 
+import com.backend.backend_pfe.enums.StatutTache;
 import lombok.*;
 
 import java.time.LocalDate;
@@ -43,5 +44,7 @@ public class CollabPlanningJourDTO {
         private String projet;
         private String tache;
         private int ordreJour;
+        private StatutTache statut;
+        private Integer pourcentageAvancement;
     }
 }

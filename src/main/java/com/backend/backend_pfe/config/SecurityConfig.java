@@ -63,7 +63,7 @@ public class SecurityConfig {
                         .requestMatchers("/api/rm/**").hasRole("RESOURCE_MANAGER")
                         // Project endpoints — accessible to both CHEF_PROJET and RESOURCE_MANAGER
                         .requestMatchers(HttpMethod.POST, "/api/projets").hasRole("CHEF_PROJET")
-                        .requestMatchers(HttpMethod.GET, "/api/projets").hasAnyRole("CHEF_PROJET", "RESOURCE_MANAGER")
+                        .requestMatchers(HttpMethod.GET, "/api/projets").hasRole("CHEF_PROJET")
                         .requestMatchers("/api/projets/*/previsions/**").hasRole("CHEF_PROJET")
                         .requestMatchers("/api/previsions/**").hasRole("CHEF_PROJET")
                         // Anomalies — accessible to both CHEF_PROJET and RESOURCE_MANAGER

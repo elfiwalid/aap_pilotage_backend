@@ -1,5 +1,6 @@
 package com.backend.backend_pfe.service;
 
+import com.backend.backend_pfe.DTO.request.UpdateTacheCollaborateurRequestDTO;
 import com.backend.backend_pfe.DTO.response.ImportTachesResponseDTO;
 import com.backend.backend_pfe.DTO.response.TacheCollaborateurDTO;
 import com.backend.backend_pfe.Entity.Affectation;
@@ -10,6 +11,8 @@ import com.backend.backend_pfe.Repository.AffectationRepository;
 import com.backend.backend_pfe.Repository.AffectationTacheCollaborateurRepository;
 import com.backend.backend_pfe.Repository.ProjetRepository;
 import com.backend.backend_pfe.Repository.UserRepository;
+import com.backend.backend_pfe.enums.Role;
+import com.backend.backend_pfe.enums.StatutTache;
 import com.backend.backend_pfe.exception.BusinessValidationException;
 import com.backend.backend_pfe.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
@@ -105,13 +108,12 @@ public class TacheCollaborateurServiceImpl implements TacheCollaborateurService 
             }
         }
 
+        replaceExistingTasksForImportedMonths(projet, lines);
+
         LocalDateTime now = LocalDateTime.now();
         List<AffectationTacheCollaborateur> created = new ArrayList<>();
         for (Map.Entry<TaskGroup, List<TaskLine>> entry : grouped.entrySet()) {
             TaskGroup group = entry.getKey();
-            tacheRepository.deleteByAffectationInAndDateTacheBetween(
-                    List.of(group.affectation()), group.dateDebut(), group.dateFin());
-
             List<LocalDate> joursOuvrables = workingDays(group.dateDebut(), group.dateFin());
             int dayIndex = 0;
             int ordre = 1;
@@ -128,6 +130,8 @@ public class TacheCollaborateurServiceImpl implements TacheCollaborateurService 
                             .dateDebutV2(group.dateDebut())
                             .dateFinV2(group.dateFin())
                             .dateImport(now)
+                            .statut(StatutTache.EN_ATTENTE)
+                            .pourcentageAvancement(0)
                             .build());
                 }
             }
@@ -151,7 +155,7 @@ public class TacheCollaborateurServiceImpl implements TacheCollaborateurService 
     @Transactional(readOnly = true)
     public List<TacheCollaborateurDTO> getTachesCollaborateur(
             Authentication authentication, Integer annee, Integer mois) {
-        User collaborateur = resolveUser(authentication);
+        List<User> collaborateurs = resolveCollaborateurIdentities(authentication);
         LocalDate debut;
         LocalDate fin;
         if (annee != null && mois != null) {
@@ -164,10 +168,31 @@ public class TacheCollaborateurServiceImpl implements TacheCollaborateurService 
         }
 
         return tacheRepository
-                .findByCollaborateurAndDateTacheBetweenOrderByDateTacheAscOrdreJourAsc(collaborateur, debut, fin)
+                .findByCollaborateurInAndDateTacheBetweenOrderByDateTacheAscOrdreJourAsc(collaborateurs, debut, fin)
                 .stream()
                 .map(this::toDTO)
                 .toList();
+    }
+
+    @Override
+    @Transactional
+    public TacheCollaborateurDTO updateTacheCollaborateur(
+            Long tacheId, UpdateTacheCollaborateurRequestDTO request, Authentication authentication) {
+        List<User> collaborateurs = resolveCollaborateurIdentities(authentication);
+        Set<Long> allowedIds = collaborateurs.stream().map(User::getId).collect(Collectors.toSet());
+        AffectationTacheCollaborateur tache = tacheRepository.findById(tacheId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tache introuvable"));
+
+        if (tache.getCollaborateur() == null || !allowedIds.contains(tache.getCollaborateur().getId())) {
+            throw new AccessDeniedException("Acces refuse");
+        }
+
+        StatutTache statut = request.getStatut();
+        int pourcentage = statut == StatutTache.TERMINEE ? 100 : 0;
+
+        tache.setStatut(statut);
+        tache.setPourcentageAvancement(pourcentage);
+        return toDTO(tacheRepository.save(tache));
     }
 
     @Override
@@ -182,6 +207,23 @@ public class TacheCollaborateurServiceImpl implements TacheCollaborateurService 
                 .stream()
                 .map(this::toDTO)
                 .toList();
+    }
+
+    private void replaceExistingTasksForImportedMonths(Projet projet, List<TaskLine> lines) {
+        Set<YearMonth> months = new LinkedHashSet<>();
+        for (TaskLine line : lines) {
+            YearMonth current = YearMonth.from(line.dateDebutV2());
+            YearMonth end = YearMonth.from(line.dateFinV2());
+            while (!current.isAfter(end)) {
+                months.add(current);
+                current = current.plusMonths(1);
+            }
+        }
+
+        for (YearMonth month : months) {
+            tacheRepository.deleteByProjetAndDateTacheBetween(
+                    projet, month.atDay(1), month.atEndOfMonth());
+        }
     }
 
     private List<TaskLine> parseExcel(MultipartFile file) {
@@ -238,24 +280,34 @@ public class TacheCollaborateurServiceImpl implements TacheCollaborateurService 
 
     private User resolveCollaborateurFromV2(TaskLine line, List<Affectation> affectationsProjet) {
         if (line.matricule() != null && !line.matricule().isBlank()) {
-            return affectationsProjet.stream()
+            Optional<User> byMatricule = affectationsProjet.stream()
                     .map(Affectation::getCollaborateur)
                     .filter(u -> line.matricule().equalsIgnoreCase(nullToEmpty(u.getMatricule())))
-                    .findFirst()
-                    .orElseThrow(() -> new BusinessValidationException("Ligne " + line.rowNumber()
-                            + ": collaborateur matricule " + line.matricule() + " introuvable dans le V2 du projet."));
+                    .findFirst();
+            if (byMatricule.isPresent()) {
+                return byMatricule.get();
+            }
+            if (line.nom() == null || line.nom().isBlank()
+                    || line.prenom() == null || line.prenom().isBlank()) {
+                throw new BusinessValidationException("Ligne " + line.rowNumber()
+                        + ": collaborateur matricule " + line.matricule() + " introuvable dans le V2 du projet.");
+            }
         }
 
         String expectedNom = normalize(line.nom());
         String expectedPrenom = normalize(line.prenom());
         return affectationsProjet.stream()
                 .map(Affectation::getCollaborateur)
-                .filter(u -> normalize(u.getNom()).equals(expectedNom)
-                        && normalize(u.getPrenom()).equals(expectedPrenom))
+                .filter(u -> matchesCollaborateurName(u, expectedNom, expectedPrenom))
                 .findFirst()
                 .orElseThrow(() -> new BusinessValidationException("Ligne " + line.rowNumber()
                         + ": collaborateur " + line.prenom() + " " + line.nom()
                         + " introuvable dans le V2 du projet."));
+    }
+
+    private boolean matchesCollaborateurName(User user, String expectedNom, String expectedPrenom) {
+        return normalize(user.getNom()).equals(expectedNom)
+                && normalize(user.getPrenom()).equals(expectedPrenom);
     }
 
     private Affectation resolveAffectationForPeriod(
@@ -430,13 +482,63 @@ public class TacheCollaborateurServiceImpl implements TacheCollaborateurService 
                 .ordreJour(tache.getOrdreJour())
                 .dateDebutV2(tache.getDateDebutV2())
                 .dateFinV2(tache.getDateFinV2())
+                .statut(tache.getStatut() != null ? tache.getStatut() : StatutTache.EN_ATTENTE)
+                .pourcentageAvancement(derivedProgress(tache.getStatut()))
                 .build();
+    }
+
+    private int derivedProgress(StatutTache statut) {
+        return statut == StatutTache.TERMINEE ? 100 : 0;
     }
 
     private User resolveUser(Authentication authentication) {
         String email = authentication.getName();
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur introuvable"));
+    }
+
+    private List<User> resolveCollaborateurIdentities(Authentication authentication) {
+        User connected = resolveUser(authentication);
+        Map<Long, User> identities = new LinkedHashMap<>();
+        addIdentity(identities, connected);
+
+        String matricule = connected.getMatricule();
+        if (matricule != null && !matricule.isBlank()) {
+            userRepository.findByMatricule(matricule.trim()).ifPresent(user -> addIdentity(identities, user));
+        }
+
+        String connectedNameKey = normalizePersonNameKey(connected.getNom() + " " + connected.getPrenom());
+        if (!connectedNameKey.isBlank()) {
+            userRepository.findByRole(Role.COLLABORATEUR).stream()
+                    .filter(user -> normalizePersonNameKey(user.getNom() + " " + user.getPrenom())
+                            .equals(connectedNameKey))
+                    .forEach(user -> addIdentity(identities, user));
+        }
+
+        return new ArrayList<>(identities.values());
+    }
+
+    private void addIdentity(Map<Long, User> identities, User user) {
+        if (user != null && user.getId() != null && user.getRole() == Role.COLLABORATEUR) {
+            identities.putIfAbsent(user.getId(), user);
+        }
+    }
+
+    private String normalizePersonNameKey(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFD)
+                .replaceAll("[\\p{InCombiningDiacriticalMarks}]", "")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim();
+        if (normalized.isBlank()) {
+            return "";
+        }
+        return Arrays.stream(normalized.split("\\s+"))
+                .sorted()
+                .collect(Collectors.joining(" "));
     }
 
     private void verifyOwnership(Projet projet, User user) {

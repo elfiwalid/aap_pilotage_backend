@@ -24,7 +24,7 @@ public class RmResourceController {
     private final RmResourceService rmResourceService;
     private final ExportV2Service exportV2Service;
 
-    /** GET /api/rm/resources — Liste de tous les collaborateurs avec taux et heatmap. */
+    /** GET /api/rm/resources - Liste de tous les collaborateurs avec taux et heatmap. */
     @GetMapping("/resources")
     @PreAuthorize("hasRole('RESOURCE_MANAGER')")
     public ResponseEntity<List<RmResourceDTO>> getAllResources(
@@ -32,8 +32,16 @@ public class RmResourceController {
             @RequestParam(required = false) Integer mois) {
         return ResponseEntity.ok(rmResourceService.getAllResources(annee, mois));
     }
+    
+    /** DELETE /api/rm/resources/{collaborateurId} - Supprimer un collaborateur et ses donnees liees. */
+    @DeleteMapping("/resources/{collaborateurId}")
+    @PreAuthorize("hasRole('RESOURCE_MANAGER')")
+    public ResponseEntity<Void> supprimerCollaborateur(@PathVariable Long collaborateurId) {
+        rmResourceService.supprimerCollaborateur(collaborateurId);
+        return ResponseEntity.noContent().build();
+    }
 
-    /** GET /api/rm/dashboard — Données agrégées du dashboard RM. */
+    /** GET /api/rm/dashboard - Donnees agregees du dashboard RM. */
     @GetMapping("/dashboard")
     @PreAuthorize("hasRole('RESOURCE_MANAGER')")
     public ResponseEntity<RmDashboardDTO> getDashboard(
@@ -42,21 +50,21 @@ public class RmResourceController {
         return ResponseEntity.ok(rmResourceService.getDashboard(annee, mois));
     }
 
-    /** GET /api/rm/projets — Liste de tous les projets avec leur équipe. */
+    /** GET /api/rm/projets - Liste de tous les projets avec leur équipe. */
     @GetMapping("/projets")
     @PreAuthorize("hasRole('RESOURCE_MANAGER')")
     public ResponseEntity<List<RmProjetDTO>> getAllProjets() {
         return ResponseEntity.ok(rmResourceService.getAllProjets());
     }
 
-    /** GET /api/rm/conflits — Liste des anomalies enrichies avec alternatives. */
+    /** GET /api/rm/conflits - Liste des anomalies enrichies avec alternatives. */
     @GetMapping("/conflits")
     @PreAuthorize("hasRole('RESOURCE_MANAGER')")
     public ResponseEntity<List<RmConflitDTO>> getConflits() {
         return ResponseEntity.ok(rmResourceService.getConflits());
     }
 
-    /** POST /api/rm/propositions — Proposer un collaborateur alternatif au chef de projet. */
+    /** POST /api/rm/propositions - Proposer un collaborateur alternatif au chef de projet. */
     @PostMapping("/propositions")
     @PreAuthorize("hasRole('RESOURCE_MANAGER')")
     public ResponseEntity<Void> proposerAlternative(
@@ -70,7 +78,7 @@ public class RmResourceController {
         return ResponseEntity.ok().build();
     }
 
-    /** POST /api/rm/export-v2 — Exporter le V2 consolidé pour les projets sélectionnés. */
+    /** POST /api/rm/export-v2 - Exporter le V2 consolidé pour les projets sélectionnés. */
     @PostMapping("/export-v2")
     @PreAuthorize("hasRole('RESOURCE_MANAGER')")
     public ResponseEntity<byte[]> exporterV2(@RequestBody java.util.Map<String, java.util.List<Long>> body) {

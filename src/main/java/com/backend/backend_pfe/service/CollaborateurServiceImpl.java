@@ -10,8 +10,11 @@ import com.backend.backend_pfe.Entity.User;
 import com.backend.backend_pfe.Repository.AffectationRepository;
 import com.backend.backend_pfe.Repository.AffectationTacheCollaborateurRepository;
 import com.backend.backend_pfe.Repository.UserRepository;
+import com.backend.backend_pfe.enums.Role;
+import com.backend.backend_pfe.enums.StatutTache;
 import com.backend.backend_pfe.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
 
@@ -20,8 +23,10 @@ import java.time.YearMonth;
 import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -33,6 +38,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class CollaborateurServiceImpl implements CollaborateurService {
 
     private final AffectationRepository affectationRepository;
@@ -48,8 +54,8 @@ public class CollaborateurServiceImpl implements CollaborateurService {
 
     @Override
     public CollabDashboardDTO getDashboard(Authentication authentication, Integer anneeParam, Integer moisParam) {
-        User collaborateur = resolveUser(authentication);
-        List<Affectation> affectations = affectationRepository.findByCollaborateur(collaborateur);
+        List<User> collaborateurs = resolveCollaborateurIdentities(authentication);
+        List<Affectation> affectations = findAffectationsForCollaborateurs(collaborateurs);
         LocalDate today = LocalDate.now();
         int year = anneeParam != null ? anneeParam : today.getYear();
         int month = moisParam != null ? moisParam : today.getMonthValue();
@@ -64,6 +70,9 @@ public class CollaborateurServiceImpl implements CollaborateurService {
                 .filter(a -> a.getDateDebut() != null && a.getDateFin() != null)
                 .filter(a -> !a.getDateFin().isBefore(monthStart) && !a.getDateDebut().isAfter(monthEnd))
                 .toList();
+        List<AffectationTacheCollaborateur> tachesMois = tacheRepository
+                .findByCollaborateurInAndDateTacheBetweenOrderByDateTacheAscOrdreJourAsc(
+                        collaborateurs, monthStart, monthEnd);
 
         List<CollabProjetDTO> projets = affectations.stream()
                 .map(this::toProjetDTO)
@@ -103,6 +112,12 @@ public class CollaborateurServiceImpl implements CollaborateurService {
                 .capaciteRestante(Math.round(capaciteRestante * 10.0) / 10.0)
                 .projetsBientotTermines(projetsBientotTermines)
                 .avancementMoyen(avancementMoyen)
+                .totalTaches(tachesMois.size())
+                .tachesTerminees(countTachesByStatut(tachesMois, StatutTache.TERMINEE))
+                .tachesEnCours(countTachesByStatut(tachesMois, StatutTache.EN_COURS))
+                .tachesBloquees(countTachesByStatut(tachesMois, StatutTache.BLOQUEE))
+                .tachesEnAttente(countTachesByStatut(tachesMois, StatutTache.EN_ATTENTE))
+                .avancementGlobalTaches(computeAvancementTaches(tachesMois))
                 .projets(projets)
                 .chargeMensuelle(computeChargeMensuelle(affectations, selectedYm.atDay(15)))
                 .build();
@@ -110,8 +125,8 @@ public class CollaborateurServiceImpl implements CollaborateurService {
 
     @Override
     public List<CollabProjetDTO> getMesProjets(Authentication authentication) {
-        User collaborateur = resolveUser(authentication);
-        return affectationRepository.findByCollaborateur(collaborateur).stream()
+        List<User> collaborateurs = resolveCollaborateurIdentities(authentication);
+        return findAffectationsForCollaborateurs(collaborateurs).stream()
                 .map(this::toProjetDTO)
                 .sorted((a, b) -> b.getDateFin().compareTo(a.getDateFin()))
                 .collect(Collectors.toList());
@@ -119,8 +134,8 @@ public class CollaborateurServiceImpl implements CollaborateurService {
 
     @Override
     public List<CollabPlanningJourDTO> getPlanning(Authentication authentication, int annee, int mois) {
-        User collaborateur = resolveUser(authentication);
-        List<Affectation> affectations = affectationRepository.findByCollaborateur(collaborateur);
+        List<User> collaborateurs = resolveCollaborateurIdentities(authentication);
+        List<Affectation> affectations = findAffectationsForCollaborateurs(collaborateurs);
 
         YearMonth yearMonth = YearMonth.of(annee, mois);
         int daysInMonth = yearMonth.lengthOfMonth();
@@ -128,8 +143,8 @@ public class CollaborateurServiceImpl implements CollaborateurService {
         LocalDate monthStart = yearMonth.atDay(1);
         LocalDate monthEnd = yearMonth.atEndOfMonth();
         List<AffectationTacheCollaborateur> tachesDuMois = tacheRepository
-                .findByCollaborateurAndDateTacheBetweenOrderByDateTacheAscOrdreJourAsc(
-                        collaborateur, monthStart, monthEnd);
+                .findByCollaborateurInAndDateTacheBetweenOrderByDateTacheAscOrdreJourAsc(
+                        collaborateurs, monthStart, monthEnd);
 
         List<CollabPlanningJourDTO> planning = new ArrayList<>();
         for (int day = 1; day <= daysInMonth; day++) {
@@ -224,7 +239,29 @@ public class CollaborateurServiceImpl implements CollaborateurService {
                 .projet(projet.getNom())
                 .tache(tache.getTache())
                 .ordreJour(tache.getOrdreJour())
+                .statut(tache.getStatut() != null ? tache.getStatut() : StatutTache.EN_ATTENTE)
+                .pourcentageAvancement(derivedProgress(tache.getStatut()))
                 .build();
+    }
+
+    private int derivedProgress(StatutTache statut) {
+        return statut == StatutTache.TERMINEE ? 100 : 0;
+    }
+
+    private int countTachesByStatut(List<AffectationTacheCollaborateur> taches, StatutTache statut) {
+        return (int) taches.stream()
+                .filter(t -> (t.getStatut() != null ? t.getStatut() : StatutTache.EN_ATTENTE) == statut)
+                .count();
+    }
+
+    private double computeAvancementTaches(List<AffectationTacheCollaborateur> taches) {
+        if (taches.isEmpty()) {
+            return 0;
+        }
+        long terminees = taches.stream()
+                .filter(t -> (t.getStatut() != null ? t.getStatut() : StatutTache.EN_ATTENTE) == StatutTache.TERMINEE)
+                .count();
+        return Math.round((double) terminees / taches.size() * 1000.0) / 10.0;
     }
 
     /**
@@ -310,6 +347,66 @@ public class CollaborateurServiceImpl implements CollaborateurService {
         String email = authentication.getName();
         return userRepository.findByEmail(email)
                 .orElseThrow(() -> new ResourceNotFoundException("Utilisateur introuvable"));
+    }
+
+    private List<User> resolveCollaborateurIdentities(Authentication authentication) {
+        User connected = resolveUser(authentication);
+        Map<Long, User> identities = new LinkedHashMap<>();
+        addIdentity(identities, connected);
+
+        String matricule = connected.getMatricule();
+        if (matricule != null && !matricule.isBlank()) {
+            userRepository.findByMatricule(matricule.trim()).ifPresent(user -> addIdentity(identities, user));
+        }
+
+        String connectedNameKey = normalizePersonNameKey(connected.getNom() + " " + connected.getPrenom());
+        if (!connectedNameKey.isBlank()) {
+            userRepository.findByRole(Role.COLLABORATEUR).stream()
+                    .filter(user -> normalizePersonNameKey(user.getNom() + " " + user.getPrenom())
+                            .equals(connectedNameKey))
+                    .forEach(user -> addIdentity(identities, user));
+        }
+
+        List<User> result = new ArrayList<>(identities.values());
+        if (result.size() > 1) {
+            log.info("Collaborateur {} resolu sur {} identite(s): {}",
+                    connected.getEmail(),
+                    result.size(),
+                    result.stream()
+                            .map(user -> user.getId() + ":" + user.getEmail() + ":" + user.getMatricule())
+                            .collect(Collectors.joining(", ")));
+        }
+        return result;
+    }
+
+    private void addIdentity(Map<Long, User> identities, User user) {
+        if (user != null && user.getId() != null && user.getRole() == Role.COLLABORATEUR) {
+            identities.putIfAbsent(user.getId(), user);
+        }
+    }
+
+    private List<Affectation> findAffectationsForCollaborateurs(List<User> collaborateurs) {
+        if (collaborateurs.size() == 1) {
+            return affectationRepository.findByCollaborateur(collaborateurs.get(0));
+        }
+        return affectationRepository.findByCollaborateurIn(collaborateurs);
+    }
+
+    private String normalizePersonNameKey(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+        String normalized = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
+                .replaceAll("[\\p{InCombiningDiacriticalMarks}]", "")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9]+", " ")
+                .trim();
+        if (normalized.isBlank()) {
+            return "";
+        }
+        return java.util.Arrays.stream(normalized.split("\\s+"))
+                .sorted()
+                .collect(Collectors.joining(" "));
     }
 
     private int countWorkingDays(LocalDate start, LocalDate end) {

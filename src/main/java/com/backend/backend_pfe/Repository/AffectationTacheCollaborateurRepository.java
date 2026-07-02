@@ -16,6 +16,9 @@ public interface AffectationTacheCollaborateurRepository
     List<AffectationTacheCollaborateur> findByCollaborateurAndDateTacheBetweenOrderByDateTacheAscOrdreJourAsc(
             User collaborateur, LocalDate debut, LocalDate fin);
 
+    List<AffectationTacheCollaborateur> findByCollaborateurInAndDateTacheBetweenOrderByDateTacheAscOrdreJourAsc(
+            Collection<User> collaborateurs, LocalDate debut, LocalDate fin);
+
     List<AffectationTacheCollaborateur> findByProjetOrderByDateTacheAscOrdreJourAsc(Projet projet);
 
     List<AffectationTacheCollaborateur> findByProjetAndCollaborateurOrderByDateTacheAscOrdreJourAsc(
@@ -25,6 +28,8 @@ public interface AffectationTacheCollaborateurRepository
             Collection<Affectation> affectations, LocalDate debut, LocalDate fin);
 
     void deleteByProjet(Projet projet);
+
+    void deleteByProjetAndDateTacheBetween(Projet projet, LocalDate debut, LocalDate fin);
 
     void deleteByAffectationIn(Collection<Affectation> affectations);
 

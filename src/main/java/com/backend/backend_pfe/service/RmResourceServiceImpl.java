@@ -9,7 +9,10 @@ import com.backend.backend_pfe.Repository.*;
 import com.backend.backend_pfe.enums.Role;
 import com.backend.backend_pfe.enums.StatutAnomalie;
 import com.backend.backend_pfe.enums.TypeAnomalieV2;
+import com.backend.backend_pfe.exception.BusinessValidationException;
 import com.backend.backend_pfe.exception.ResourceNotFoundException;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Service;
@@ -38,6 +41,9 @@ public class RmResourceServiceImpl implements RmResourceService {
     private final PropositionRepository propositionRepository;
     private final NotificationService notificationService;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     private static final String[] PALETTE = {
             "#7B2CBF", "#2D9CDB", "#059669", "#F59E0B",
             "#E600A9", "#8B5CF6", "#EF4444", "#0EA5E9",
@@ -55,6 +61,102 @@ public class RmResourceServiceImpl implements RmResourceService {
         return collaborateurs.stream()
                 .map(user -> buildResourceDTO(user, year, month))
                 .collect(Collectors.toList());
+    }
+
+    @Override
+    @Transactional
+    public void supprimerCollaborateur(Long collaborateurId) {
+        User collaborateur = userRepository.findById(collaborateurId)
+                .orElseThrow(() -> new ResourceNotFoundException("Collaborateur introuvable"));
+
+        if (collaborateur.getRole() != Role.COLLABORATEUR) {
+            throw new BusinessValidationException("Seuls les collaborateurs peuvent etre supprimes depuis cette interface");
+        }
+
+        detachAndDeleteCollaborateurDependencies(collaborateurId);
+        userRepository.delete(collaborateur);
+    }
+
+    private void detachAndDeleteCollaborateurDependencies(Long collaborateurId) {
+        executeNative("""
+            DELETE FROM simulation_decisions
+            WHERE conversation_id IN (
+                SELECT id FROM conversations_simulation WHERE created_by_id = :id
+            )
+        """, collaborateurId);
+
+        executeNative("""
+            DELETE FROM messages_conversation
+            WHERE auteur_id = :id
+               OR conversation_id IN (
+                    SELECT id FROM conversations_simulation WHERE created_by_id = :id
+               )
+        """, collaborateurId);
+
+        executeNative("""
+            DELETE FROM conversation_participants
+            WHERE user_id = :id
+               OR conversation_id IN (
+                    SELECT id FROM conversations_simulation WHERE created_by_id = :id
+               )
+        """, collaborateurId);
+
+        executeNative("DELETE FROM conversations_simulation WHERE created_by_id = :id", collaborateurId);
+
+        executeNative("""
+            DELETE FROM scenarios_what_if
+            WHERE collaborateur_source_id = :id
+               OR collaborateur_cible_id = :id
+        """, collaborateurId);
+
+        executeNative("""
+            UPDATE simulations_what_if
+            SET anomalie_id = NULL
+            WHERE anomalie_id IN (
+                SELECT id FROM anomalies_v2 WHERE collaborateur_id = :id
+            )
+        """, collaborateurId);
+
+        executeNative("""
+            DELETE FROM propositions
+            WHERE collaborateur_propose_id = :id
+               OR anomalie_id IN (
+                    SELECT id FROM anomalies WHERE collaborateur_id = :id
+               )
+        """, collaborateurId);
+
+        executeNative("""
+            DELETE FROM notifications
+            WHERE expediteur_id = :id
+               OR destinataire_id = :id
+               OR anomalie_id IN (
+                    SELECT id FROM anomalies WHERE collaborateur_id = :id
+               )
+        """, collaborateurId);
+
+        executeNative("""
+            DELETE FROM evaluations
+            WHERE collaborateur_id = :id
+               OR evaluateur_id = :id
+        """, collaborateurId);
+
+        executeNative("""
+            DELETE FROM affectations_taches_collaborateurs
+            WHERE collaborateur_id = :id
+               OR affectation_id IN (
+                    SELECT id FROM affectations WHERE collaborateur_id = :id
+               )
+        """, collaborateurId);
+
+        executeNative("DELETE FROM affectations WHERE collaborateur_id = :id", collaborateurId);
+        executeNative("DELETE FROM anomalies_v2 WHERE collaborateur_id = :id", collaborateurId);
+        executeNative("DELETE FROM anomalies WHERE collaborateur_id = :id", collaborateurId);
+    }
+
+    private void executeNative(String sql, Long collaborateurId) {
+        entityManager.createNativeQuery(sql)
+                .setParameter("id", collaborateurId)
+                .executeUpdate();
     }
 
     @Override

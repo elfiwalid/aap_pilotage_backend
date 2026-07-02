@@ -24,6 +24,12 @@ public class CollabDashboardDTO {
     private int projetsBientotTermines;
     /** Avancement moyen des projets actifs */
     private int avancementMoyen;
+    private int totalTaches;
+    private int tachesTerminees;
+    private int tachesEnCours;
+    private int tachesBloquees;
+    private int tachesEnAttente;
+    private double avancementGlobalTaches;
 
     /** Liste des projets du collaborateur (pour les graphiques et la liste) */
     private List<CollabProjetDTO> projets;

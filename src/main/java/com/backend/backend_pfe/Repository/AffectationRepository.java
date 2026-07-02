@@ -18,6 +18,8 @@ public interface AffectationRepository extends JpaRepository<Affectation, Long> 
 
     List<Affectation> findByCollaborateur(User collaborateur);
 
+    List<Affectation> findByCollaborateurIn(List<User> collaborateurs);
+
     @Query("""
         SELECT a FROM Affectation a
         WHERE a.collaborateur.id = :collaborateurId

@@ -4,10 +4,16 @@ import com.backend.backend_pfe.DTO.request.ProjetRequestDTO;
 import com.backend.backend_pfe.DTO.response.ProjetResponseDTO;
 import com.backend.backend_pfe.Entity.Projet;
 import com.backend.backend_pfe.Entity.User;
+import com.backend.backend_pfe.Repository.AffectationRepository;
+import com.backend.backend_pfe.Repository.AffectationTacheCollaborateurRepository;
+import com.backend.backend_pfe.Repository.AnomalieV2Repository;
+import com.backend.backend_pfe.Repository.PrevisionRepository;
 import com.backend.backend_pfe.Repository.ProjetRepository;
+import com.backend.backend_pfe.Repository.SimulationWhatIfRepository;
 import com.backend.backend_pfe.Repository.UserRepository;
 import com.backend.backend_pfe.enums.Role;
 import com.backend.backend_pfe.enums.StatutProjet;
+import com.backend.backend_pfe.service.NotificationService;
 import net.jqwik.api.*;
 import net.jqwik.api.constraints.NotBlank;
 import net.jqwik.api.constraints.StringLength;
@@ -37,7 +43,15 @@ class ProjetServiceStatutDefautPropertyTest {
 
     private final ProjetRepository projetRepository = Mockito.mock(ProjetRepository.class);
     private final UserRepository userRepository = Mockito.mock(UserRepository.class);
-    private final ProjetServiceImpl projetService = new ProjetServiceImpl(projetRepository, userRepository, null, null, null);
+    private final ProjetServiceImpl projetService = new ProjetServiceImpl(
+            projetRepository,
+            userRepository,
+            Mockito.mock(NotificationService.class),
+            Mockito.mock(AffectationRepository.class),
+            Mockito.mock(AnomalieV2Repository.class),
+            Mockito.mock(PrevisionRepository.class),
+            Mockito.mock(AffectationTacheCollaborateurRepository.class),
+            Mockito.mock(SimulationWhatIfRepository.class));
 
     /**
      * Property 5: Statut par défaut PLANIFIE

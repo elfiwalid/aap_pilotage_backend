@@ -347,7 +347,7 @@ public class WhatIfSimulationServiceImpl implements WhatIfSimulationService {
         if (simulation.getTypeSimulation() == TypeSimulationWhatIf.REMPLACEMENT) {
             appliquerRemplacement(scenario);
         } else if (simulation.getTypeSimulation() == TypeSimulationWhatIf.SOUS_CHARGE) {
-            appliquerSousCharge(scenario);
+            appliquerSousChargeFusion(scenario);
         } else {
             throw new BusinessValidationException("Type de simulation non supporté");
         }
@@ -366,6 +366,48 @@ public class WhatIfSimulationServiceImpl implements WhatIfSimulationService {
                     DEFAULT_COUNTRY
             );
         }
+    }
+
+    private void appliquerSousChargeFusion(ScenarioWhatIf scenario) {
+        Long collaborateurId = scenario.getCollaborateurCible().getId();
+        Long projetId = scenario.getProjet().getId();
+        LocalDate dateDebut = scenario.getDateDebut();
+        LocalDate dateFin = scenario.getDateFin();
+
+        boolean conflitAutreProjet = affectationRepository.findAffectationsChevauchantes(
+                        collaborateurId,
+                        dateDebut,
+                        dateFin
+                ).stream()
+                .anyMatch(affectation -> !affectation.getProjet().getId().equals(projetId));
+
+        if (conflitAutreProjet) {
+            throw new BusinessValidationException(
+                    "Le collaborateur est deja affecte a un autre projet sur cette periode"
+            );
+        }
+
+        List<Affectation> affectationsMemeProjet = affectationRepository.findAffectationsProjetSurPeriode(
+                collaborateurId,
+                projetId,
+                dateDebut,
+                dateFin
+        );
+
+        if (!affectationsMemeProjet.isEmpty()) {
+            throw new BusinessValidationException("Cette affectation existe deja");
+        }
+
+        Affectation nouvelleAffectation = Affectation.builder()
+                .collaborateur(scenario.getCollaborateurCible())
+                .projet(scenario.getProjet())
+                .dateDebut(dateDebut)
+                .dateFin(dateFin)
+                .tauxAffectation(scenario.getTauxAffectation())
+                .roleDansProjet("Collaborateur")
+                .build();
+
+        affectationRepository.save(nouvelleAffectation);
     }
 
     private void appliquerSousCharge(ScenarioWhatIf scenario) {
@@ -675,7 +717,14 @@ public class WhatIfSimulationServiceImpl implements WhatIfSimulationService {
                 capaciteMensuelle
         );
 
-        boolean nouveauConflit = hasNewConflictForTarget(
+        boolean affectationMemeProjetExistante = !affectationRepository.findAffectationsProjetSurPeriode(
+                cible.getId(),
+                projet.getId(),
+                request.getDateDebut(),
+                request.getDateFin()
+        ).isEmpty();
+
+        boolean nouveauConflit = affectationMemeProjetExistante || hasNewConflictForTarget(
                 cible.getId(),
                 projet.getId(),
                 request.getDateDebut(),
@@ -698,7 +747,8 @@ public class WhatIfSimulationServiceImpl implements WhatIfSimulationService {
                 resultat,
                 sousChargeReduite,
                 nouvelleSurcharge,
-                nouveauConflit
+                nouveauConflit,
+                affectationMemeProjetExistante
         );
 
         SimulationWhatIf simulation = SimulationWhatIf.builder()
@@ -792,8 +842,13 @@ public class WhatIfSimulationServiceImpl implements WhatIfSimulationService {
             ResultatSimulationWhatIf resultat,
             boolean sousChargeReduite,
             boolean nouvelleSurcharge,
-            boolean nouveauConflit
+            boolean nouveauConflit,
+            boolean affectationMemeProjetExistante
     ) {
+        if (affectationMemeProjetExistante) {
+            return "Simulation non applicable : cette affectation existe deja sur le meme projet.";
+        }
+
         if (resultat == ResultatSimulationWhatIf.POSITIF) {
             if (sousChargeReduite) {
                 return "Simulation positive : la sous-charge du collaborateur est réduite sans créer de nouvelle anomalie.";

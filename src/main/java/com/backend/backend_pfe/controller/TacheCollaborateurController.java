@@ -1,7 +1,9 @@
 package com.backend.backend_pfe.controller;
 
+import com.backend.backend_pfe.DTO.request.UpdateTacheCollaborateurRequestDTO;
 import com.backend.backend_pfe.DTO.response.ImportTachesResponseDTO;
 import com.backend.backend_pfe.DTO.response.TacheCollaborateurDTO;
+import jakarta.validation.Valid;
 import com.backend.backend_pfe.service.TacheCollaborateurService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -49,6 +51,16 @@ public class TacheCollaborateurController {
             Authentication authentication) {
         return ResponseEntity.ok(
                 tacheCollaborateurService.getTachesCollaborateur(authentication, annee, mois));
+    }
+
+    @PutMapping("/collaborateur/taches/{id}")
+    @PreAuthorize("hasRole('COLLABORATEUR')")
+    public ResponseEntity<TacheCollaborateurDTO> updateTache(
+            @PathVariable Long id,
+            @Valid @RequestBody UpdateTacheCollaborateurRequestDTO request,
+            Authentication authentication) {
+        return ResponseEntity.ok(
+                tacheCollaborateurService.updateTacheCollaborateur(id, request, authentication));
     }
 
     @GetMapping("/projets/{projetId}/taches")

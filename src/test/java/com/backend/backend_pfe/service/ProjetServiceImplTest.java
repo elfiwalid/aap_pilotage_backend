@@ -4,7 +4,12 @@ import com.backend.backend_pfe.DTO.request.ProjetRequestDTO;
 import com.backend.backend_pfe.DTO.response.ProjetResponseDTO;
 import com.backend.backend_pfe.Entity.Projet;
 import com.backend.backend_pfe.Entity.User;
+import com.backend.backend_pfe.Repository.AffectationRepository;
+import com.backend.backend_pfe.Repository.AffectationTacheCollaborateurRepository;
+import com.backend.backend_pfe.Repository.AnomalieV2Repository;
+import com.backend.backend_pfe.Repository.PrevisionRepository;
 import com.backend.backend_pfe.Repository.ProjetRepository;
+import com.backend.backend_pfe.Repository.SimulationWhatIfRepository;
 import com.backend.backend_pfe.Repository.UserRepository;
 import com.backend.backend_pfe.enums.Role;
 import com.backend.backend_pfe.enums.StatutProjet;
@@ -41,6 +46,24 @@ class ProjetServiceImplTest {
 
     @Mock
     private UserRepository userRepository;
+
+    @Mock
+    private NotificationService notificationService;
+
+    @Mock
+    private AffectationRepository affectationRepository;
+
+    @Mock
+    private AnomalieV2Repository anomalieV2Repository;
+
+    @Mock
+    private PrevisionRepository previsionRepository;
+
+    @Mock
+    private AffectationTacheCollaborateurRepository tacheCollaborateurRepository;
+
+    @Mock
+    private SimulationWhatIfRepository simulationWhatIfRepository;
 
     @Mock
     private Authentication authentication;

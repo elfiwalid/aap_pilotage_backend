@@ -1,5 +1,6 @@
 package com.backend.backend_pfe.Entity;
 
+import com.backend.backend_pfe.enums.StatutTache;
 import jakarta.persistence.*;
 import lombok.*;
 
@@ -37,6 +38,13 @@ public class AffectationTacheCollaborateur {
     @Column(nullable = false)
     private LocalDateTime dateImport;
 
+    @Enumerated(EnumType.STRING)
+    @Builder.Default
+    private StatutTache statut = StatutTache.EN_ATTENTE;
+
+    @Builder.Default
+    private Integer pourcentageAvancement = 0;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "projet_id", nullable = false)
     private Projet projet;
@@ -48,4 +56,13 @@ public class AffectationTacheCollaborateur {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "affectation_id", nullable = false)
     private Affectation affectation;
+
+    @PrePersist
+    @PreUpdate
+    private void ensureTrackingDefaults() {
+        if (statut == null) {
+            statut = StatutTache.EN_ATTENTE;
+        }
+        pourcentageAvancement = statut == StatutTache.TERMINEE ? 100 : 0;
+    }
 }

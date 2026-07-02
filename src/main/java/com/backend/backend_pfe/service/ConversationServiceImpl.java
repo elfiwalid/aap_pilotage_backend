@@ -30,6 +30,7 @@ public class ConversationServiceImpl implements ConversationService {
     private final ScenarioWhatIfRepository scenarioRepository;
     private final AffectationRepository affectationRepository;
     private final UserRepository userRepository;
+    private final NotificationService notificationService;
 
     @Override
     public ConversationSimulationDTO createConversationFromSimulation(Long simulationId, Authentication authentication) {
@@ -40,10 +41,6 @@ public class ConversationServiceImpl implements ConversationService {
 
         if (simulation.getResultat() != ResultatSimulationWhatIf.POSITIF) {
             throw new BusinessValidationException("Impossible de creer une conversation pour une simulation impossible");
-        }
-
-        if (!Boolean.TRUE.equals(scenario.getSimulationGlobaleConflit())) {
-            throw new BusinessValidationException("Seules les simulations globales de conflit peuvent creer une conversation");
         }
 
         if (simulation.getResourceManager() == null
@@ -66,7 +63,8 @@ public class ConversationServiceImpl implements ConversationService {
 
         addParticipant(conversation, currentUser, null, false);
 
-        for (Projet projet : getProjetsConflit(scenario)) {
+        boolean decisionRequired = Boolean.TRUE.equals(scenario.getSimulationGlobaleConflit());
+        for (Projet projet : getProjetsConversation(scenario)) {
             User chef = projet.getChefProjet();
             if (chef == null) continue;
             addParticipant(conversation, chef, projet, true);
@@ -75,8 +73,16 @@ public class ConversationServiceImpl implements ConversationService {
                     .simulation(simulation)
                     .chefProjet(chef)
                     .projet(projet)
-                    .status(SimulationDecisionStatus.PENDING)
+                    .status(decisionRequired ? SimulationDecisionStatus.PENDING : SimulationDecisionStatus.NOT_REQUIRED)
                     .build());
+            notificationService.creerNotification(
+                    chef,
+                    currentUser,
+                    TypeNotification.SYSTEME,
+                    "Nouvelle simulation What-If",
+                    "Une proposition What-If est disponible pour le projet " + projet.getNom() + ".",
+                    null
+            );
         }
 
         addSystemMessage(conversation.getId(), buildInitialSystemMessage(simulation, scenario));
@@ -158,13 +164,41 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     private String buildInitialSystemMessage(SimulationWhatIf simulation, ScenarioWhatIf scenario) {
-        String projets = String.join(", ", getProjetsConflit(scenario).stream().map(Projet::getNom).toList());
-        String chefs = String.join(", ", getProjetsConflit(scenario).stream()
+        String projets = String.join(", ", getProjetsConversation(scenario).stream().map(Projet::getNom).toList());
+        String chefs = String.join(", ", getProjetsConversation(scenario).stream()
                 .map(Projet::getChefProjet)
                 .filter(Objects::nonNull)
                 .map(this::buildFullName)
                 .distinct()
                 .toList());
+
+        if (simulation.getTypeSimulation() == TypeSimulationWhatIf.SOUS_CHARGE) {
+            return String.format("""
+                    Simulation What-If proposee par le Resource Manager :
+                    Projet : %s
+                    Collaborateur : %s
+                    Type de simulation : Sous-charge
+                    Periode : %s - %s
+                    Charge avant : %.1f%%
+                    Charge apres : %.1f%%
+                    Resultat :
+                    - Sous-charge reduite : %s
+                    - Nouvelle surcharge : %s
+                    - Nouveau conflit : %s
+                    Recommandation systeme : %s
+                    """,
+                    projets,
+                    buildFullName(scenario.getCollaborateurCible()),
+                    scenario.getDateDebut(),
+                    scenario.getDateFin(),
+                    value(scenario.getTauxCibleAvant()),
+                    value(scenario.getTauxCibleApres()),
+                    boolLabel(scenario.getSousChargeReduite()),
+                    boolLabel(scenario.getNouvelleSurcharge()),
+                    boolLabel(scenario.getNouveauConflit()),
+                    simulation.getCommentaire()
+            );
+        }
 
         return String.format("""
                 Proposition de resolution de conflit :
@@ -193,8 +227,18 @@ public class ConversationServiceImpl implements ConversationService {
         );
     }
 
+    private List<Projet> getProjetsConversation(ScenarioWhatIf scenario) {
+        if (Boolean.TRUE.equals(scenario.getSimulationGlobaleConflit())) {
+            return getProjetsConflit(scenario);
+        }
+        return scenario.getProjet() != null ? List.of(scenario.getProjet()) : List.of();
+    }
+
     private List<Projet> getProjetsConflit(ScenarioWhatIf scenario) {
         Map<Long, Projet> projets = new LinkedHashMap<>();
+        if (scenario.getCollaborateurSource() == null) {
+            return scenario.getProjet() != null ? List.of(scenario.getProjet()) : List.of();
+        }
         affectationRepository.findAffectationsChevauchantes(
                         scenario.getCollaborateurSource().getId(),
                         scenario.getDateDebut(),
@@ -207,7 +251,7 @@ public class ConversationServiceImpl implements ConversationService {
 
     private ConversationSimulationDTO toConversationDTO(ConversationSimulation conversation) {
         ScenarioWhatIf scenario = getScenario(conversation.getSimulation());
-        List<Projet> projets = getProjetsConflit(scenario);
+        List<Projet> projets = getProjetsConversation(scenario);
 
         return ConversationSimulationDTO.builder()
                 .id(conversation.getId())
@@ -215,7 +259,7 @@ public class ConversationServiceImpl implements ConversationService {
                 .status(conversation.getStatus())
                 .dateCreation(conversation.getDateCreation())
                 .createdByNomComplet(buildFullName(conversation.getCreatedBy()))
-                .collaborateurSource(buildFullName(scenario.getCollaborateurSource()))
+                .collaborateurSource(scenario.getCollaborateurSource() != null ? buildFullName(scenario.getCollaborateurSource()) : "Sous-charge")
                 .collaborateurCible(buildFullName(scenario.getCollaborateurCible()))
                 .dateDebut(scenario.getDateDebut())
                 .dateFin(scenario.getDateFin())
@@ -298,5 +342,9 @@ public class ConversationServiceImpl implements ConversationService {
 
     private double value(Double value) {
         return value != null ? value : 0.0;
+    }
+
+    private String boolLabel(Boolean value) {
+        return Boolean.TRUE.equals(value) ? "Oui" : "Non";
     }
 }

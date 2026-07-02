@@ -15,6 +15,7 @@ public interface RmResourceService {
     List<RmProjetDTO> getAllProjets();
     List<RmConflitDTO> getConflits();
     RmDashboardDTO getDashboard(Integer annee, Integer mois);
+    void supprimerCollaborateur(Long collaborateurId);
     void proposerAlternative(Long anomalieId, Long collaborateurId, Long projetId,
                              org.springframework.security.core.Authentication authentication);
 }
